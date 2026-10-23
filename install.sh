@@ -192,24 +192,47 @@ user_has() { [ -n "$TARGET_HOME" ] && { [ -x "$TARGET_HOME/.local/bin/$1" ] || [
 WANT_BOOST=-1; [ "$MAX_0F" = 1 ] && WANT_BOOST=0f
 [ "$MAX_0F" = 0 ] && [ "$(boost_current)" = 0f ] && WANT_BOOST=0f
 
-done_wifi() { pkg_installed broadcom-sta-dkms; }
-done_intel-boot() {
-  [ -f "$ESP/EFI/refind/refind_x64.efi" ] && grep -q '^spoof_osx_version' "$ESP/EFI/refind/refind.conf" 2>/dev/null &&
-    intel_boots && grep -q '^COSMIC_RENDER_DEVICE=' /etc/environment && grep -q '^WGPU_POWER_PREF=' /etc/environment &&
-    systemctl -q is-enabled dgpu-off.service 2>/dev/null && { [ -z "$OC_DEV" ] || oc_block_present; }
+# Each phase's state is a list of named sub-checks: ck records PASS/FAIL, ck_esp records "??" instead when the
+# ESP (root-only, mode 0700) cannot be read, so a normal-user dry run does not mistake that for "not installed".
+CK_LINES=(); CK_FAIL=(); CK_UNKNOWN=()
+ck() {
+  local label=$1; shift
+  if "$@" >/dev/null 2>&1; then CK_LINES+=("PASS  $label"); else CK_LINES+=("FAIL  $label"); CK_FAIL+=("$label"); fi
 }
-done_kernel() {
-  [ "$(dpkg-query -W -f='${Version}' "linux-image-$KVER" 2>/dev/null)" = "$KPKG" ] &&
-    [ -f "$ESP/loader/entries/Pop_OS-mbp.conf" ] && cmp -s "/boot/vmlinuz-$KVER" "$POP_DIR/vmlinuz-mbp.efi" &&
-    grep -q '^default Pop_OS-mbp.conf' "$ESP/loader/loader.conf" 2>/dev/null
+ck_esp() {
+  if [ -r "$ESP/EFI" ]; then ck "$@"; else CK_LINES+=("??    $1 (ESP unreadable: needs root)"); CK_UNKNOWN+=("$1"); fi
 }
-done_reclocked() {
-  [ -x /usr/local/bin/reclocked ] && [ -x /usr/local/bin/reclockctl ] && [ -f /etc/reclocked.conf ] &&
-    systemctl -q is-enabled reclocked.service 2>/dev/null && [ "$(boost_current)" = "$WANT_BOOST" ]
+run_checks() { CK_LINES=(); CK_FAIL=(); CK_UNKNOWN=(); "checks_$1"; }
+is_done() { run_checks "$1"; [ ${#CK_FAIL[@]} = 0 ] && [ ${#CK_UNKNOWN[@]} = 0 ]; }
+
+checks_wifi() { ck "broadcom-sta-dkms installed" pkg_installed broadcom-sta-dkms; }
+checks_intel-boot() {
+  ck_esp "rEFInd installed ($ESP/EFI/refind/refind_x64.efi)" test -f "$ESP/EFI/refind/refind_x64.efi"
+  ck_esp "spoof_osx_version in refind.conf" grep -q '^spoof_osx_version' "$ESP/EFI/refind/refind.conf"
+  ck "firmware boots on Intel (00:02.0 boot_vga = 1)" intel_boots
+  ck "COSMIC_RENDER_DEVICE in /etc/environment" grep -q '^COSMIC_RENDER_DEVICE=' /etc/environment
+  ck "WGPU_POWER_PREF in /etc/environment" grep -q '^WGPU_POWER_PREF=' /etc/environment
+  ck "dgpu-off.service enabled" systemctl -q is-enabled dgpu-off.service
+  [ -z "$OC_DEV" ] || ck_esp "rEFInd entry for OpenCore on $OC_DEV" oc_block_present
 }
-done_keyd() { command -v keyd >/dev/null && systemctl -q is-enabled keyd 2>/dev/null; }
-done_clover() { user_has clover-applet; }
-done_clover-dock() { user_has clover-dock; }
+checks_kernel() {
+  ck "linux-image-$KVER is $KPKG" test "$(dpkg-query -W -f='${Version}' "linux-image-$KVER" 2>/dev/null)" = "$KPKG"
+  ck_esp "boot entry Pop_OS-mbp.conf" test -f "$ESP/loader/entries/Pop_OS-mbp.conf"
+  ck_esp "ESP vmlinuz-mbp.efi matches /boot" cmp -s "/boot/vmlinuz-$KVER" "$POP_DIR/vmlinuz-mbp.efi"
+  ck_esp "loader.conf default Pop_OS-mbp.conf" grep -q '^default Pop_OS-mbp.conf' "$ESP/loader/loader.conf"
+}
+checks_reclocked() {
+  ck "reclocked and reclockctl in /usr/local/bin" test -x /usr/local/bin/reclocked -a -x /usr/local/bin/reclockctl
+  ck "/etc/reclocked.conf present" test -f /etc/reclocked.conf
+  ck "reclocked.service enabled" systemctl -q is-enabled reclocked.service
+  ck "boost-pstate = $WANT_BOOST" test "$(boost_current)" = "$WANT_BOOST"
+}
+checks_keyd() {
+  ck "keyd binary" command -v keyd
+  ck "keyd.service enabled" systemctl -q is-enabled keyd
+}
+checks_clover() { ck "clover-applet for ${TARGET_USER:-?}" user_has clover-applet; }
+checks_clover-dock() { ck "clover-dock for ${TARGET_USER:-?}" user_has clover-dock; }
 
 # Why a phase cannot run here (empty: it can).
 unavailable() {
@@ -222,7 +245,20 @@ unavailable() {
 }
 status() {
   local why; why=$(unavailable "$1")
-  if [ -n "$why" ]; then echo "n/a: $why"; elif "done_$1"; then echo installed; else echo "not installed"; fi
+  [ -z "$why" ] || { echo "n/a: $why"; return; }
+  run_checks "$1"
+  if [ ${#CK_FAIL[@]} = 0 ] && [ ${#CK_UNKNOWN[@]} = 0 ]; then echo installed
+  elif [ ${#CK_FAIL[@]} = 0 ]; then echo "unknown: run as root to check the ESP"
+  elif [ ${#CK_FAIL[@]} = ${#CK_LINES[@]} ]; then echo "not installed"
+  else echo "partly installed, missing: ${CK_FAIL[0]}$([ ${#CK_FAIL[@]} -gt 1 ] && echo " (+$((${#CK_FAIL[@]} - 1)) more)")"
+  fi
+}
+checks_report() {
+  local p l
+  for p in $ALL_PHASES; do
+    [ -z "$(unavailable "$p")" ] || continue
+    echo "[$p]"; run_checks "$p"; for l in "${CK_LINES[@]}"; do echo "  $l"; done
+  done
 }
 
 # ------------------------------------------------------------------ plan (what each phase writes)
@@ -294,7 +330,6 @@ macOS:        $MACOS
 Kernel:       $CUR_KERNEL
 Source:       ${OFFLINE:-network}
 User:         ${TARGET_USER:-none}
-$([ "$IS_ROOT" = 1 ] || echo "(not root: the ESP is unreadable, so boot-related phases may show as not installed)")
 
 Phases:
 $(for p in $ALL_PHASES; do printf '  %-12s %s\n' "$p" "$(status "$p")"; done)
@@ -304,7 +339,7 @@ EOF
 # Selected phases in run order, with dependencies pulled in.
 order() {
   local want=" $* " out=""
-  [ "${want/ clover /}" = "$want" ] || done_keyd || want="$want keyd "
+  [ "${want/ clover /}" = "$want" ] || is_done keyd || want="$want keyd "
   for p in $ALL_PHASES; do [ "${want/ $p /}" = "$want" ] || out="$out $p"; done
   echo "${out# }"
 }
@@ -319,11 +354,11 @@ if [ "$BATCH" = 1 ]; then
   for p in $(order $PHASES); do
     why=$(unavailable "$p")
     if [ -n "$why" ]; then warn "skipping $p: $why"
-    elif "done_$p"; then log "$p: already done"
+    elif is_done "$p"; then log "$p: already done"
     else SEL="$SEL $p"; fi
   done
   SEL=${SEL# }
-  if [ "$DRY_RUN" = 1 ]; then summary; echo; echo "Would write:"; plan_all; exit 0; fi
+  if [ "$DRY_RUN" = 1 ]; then summary; echo; echo "Checks:"; checks_report; echo; echo "Would write:"; plan_all; exit 0; fi
 else
   TITLE="MacBook Pro 11,3 Setup"
   whiptail --title "$TITLE" --yes-button Continue --no-button Quit --scrolltext \
@@ -345,7 +380,7 @@ else
     SEL=$(order $(grep -vx 0f-boost <<<"$picked" || true))
     [ -n "$SEL" ] || { whiptail --title "$TITLE" --msgbox "Nothing selected." 8 40; continue; }
     if [ "$DRY_RUN" = 1 ]; then
-      whiptail --title "$TITLE — dry run" --scrolltext --msgbox "Would write:\n\n$(plan_all)" 30 110; exit 0
+      whiptail --title "$TITLE — dry run" --scrolltext --msgbox "Checks:\n$(checks_report)\n\nWould write:\n\n$(plan_all)" 30 110; exit 0
     fi
     whiptail --title "$TITLE" --yes-button Install --no-button Back --scrolltext \
       --yesno "This will write:\n\n$(plan_all)" 30 110 && break
