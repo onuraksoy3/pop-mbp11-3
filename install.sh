@@ -44,7 +44,6 @@ CLOVER_DOCK_REPO="onuraksoy3/cosmic-ext-applet-clover-dock"
 LOG=/var/log/pop-mbp11-3-install.log
 SHARE=/usr/local/share/pop-mbp11-3
 LAUNCHER=/usr/share/applications/pop-mbp11-3-setup.desktop
-GPU_PREFS=/sys/firmware/efi/efivars/gpu-power-prefs-fa4ce28d-b62f-4c99-9cc3-6815686e30f9
 ESP_TYPE=c12a7328-f81f-11d2-ba4b-00a0c93ec93b
 APFS_TYPE=7c3457ef-0000-11aa-aa11-00306543ecac
 ALL_PHASES="wifi intel-boot kernel reclocked keyd clover clover-dock"
@@ -182,7 +181,8 @@ TARGET_HOME=""; [ -n "$TARGET_USER" ] && TARGET_HOME=$(getent passwd "$TARGET_US
 
 # ------------------------------------------------------------------ state checks
 pkg_installed() { [ "$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null)" = "install ok installed" ]; }
-gpu_prefs_intel() { [ -r "$GPU_PREFS" ] && [ "$(od -An -tx1 -j4 -N1 "$GPU_PREFS" | tr -d ' ')" = 01 ]; }
+# gpu-power-prefs is not visible after boot; boot_vga shows whether the firmware actually booted on Intel.
+intel_boots() { [ "$(cat /sys/bus/pci/devices/0000:00:02.0/boot_vga 2>/dev/null)" = 1 ]; }
 oc_block_present() { grep -q '^# pop-mbp11-3 begin' "$ESP/EFI/refind/refind.conf" 2>/dev/null; }
 boost_current() { sed -n '/^\[profile default\]/,/^$/ s/^boost-pstate = //p' /etc/reclocked.conf 2>/dev/null | head -1; }
 keyd_from_apt() { [ -z "$OFFLINE" ] && apt-cache policy keyd 2>/dev/null | grep -q 'Candidate: [0-9]'; }
@@ -195,7 +195,7 @@ WANT_BOOST=-1; [ "$MAX_0F" = 1 ] && WANT_BOOST=0f
 done_wifi() { pkg_installed broadcom-sta-dkms; }
 done_intel-boot() {
   [ -f "$ESP/EFI/refind/refind_x64.efi" ] && grep -q '^spoof_osx_version' "$ESP/EFI/refind/refind.conf" 2>/dev/null &&
-    gpu_prefs_intel && grep -q '^COSMIC_RENDER_DEVICE=' /etc/environment && grep -q '^WGPU_POWER_PREF=' /etc/environment &&
+    intel_boots && grep -q '^COSMIC_RENDER_DEVICE=' /etc/environment && grep -q '^WGPU_POWER_PREF=' /etc/environment &&
     systemctl -q is-enabled dgpu-off.service 2>/dev/null && { [ -z "$OC_DEV" ] || oc_block_present; }
 }
 done_kernel() {
