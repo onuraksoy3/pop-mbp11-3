@@ -14,7 +14,8 @@ cd "$WORK"
 [ -d reclocked ] || git clone -q --depth 1 -b "$PATCHES_BRANCH" "$PATCHES_REPO" reclocked
 [ -f "linux-$VER.tar.xz" ] || wget -q "https://cdn.kernel.org/pub/linux/kernel/v$MAJOR.x/linux-$VER.tar.xz"
 rm -rf "linux-$VER"; tar xf "linux-$VER.tar.xz"; cd "linux-$VER"
-for p in ../reclocked/patches/kernel/00{02..17}-*.patch; do
+# 0002–0017 come from reclocked; 0018+ live in this repo (kernel/patches/).
+for p in ../reclocked/patches/kernel/00{02..17}-*.patch "$HERE"/patches/0018-*.patch; do
   echo "== $(basename "$p")"; patch -p1 -s --no-backup-if-mismatch < "$p" || { echo "patch failed — this series targets 6.18/7.0; port it for $VER"; exit 1; }
 done
 cp "/boot/config-$(uname -r)" .config

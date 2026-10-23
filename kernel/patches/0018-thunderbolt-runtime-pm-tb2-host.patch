@@ -1,0 +1,11 @@
+--- a/drivers/thunderbolt/tb.c
++++ b/drivers/thunderbolt/tb.c
+@@ -3003,7 +3003,7 @@
+ 	 */
+ 	tb->root_switch->no_nvm_upgrade = !tb_switch_is_usb4(tb->root_switch);
+ 	/* All USB4 routers support runtime PM */
+-	tb->root_switch->rpm = tb_switch_is_usb4(tb->root_switch);
++	tb->root_switch->rpm = true;
+ 
+ 	ret = tb_switch_configure(tb->root_switch);
+ 	if (ret) {

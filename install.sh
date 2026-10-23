@@ -119,7 +119,7 @@ if ! dpkg -s "linux-image-$KVER" >/dev/null 2>&1; then
     cp "$KERNEL_DIR"/linux-image-"$KVER"_*.deb "$KERNEL_DIR"/linux-headers-"$KVER"_*.deb "$WORK/"
   else
     BASE="https://github.com/$REPO/releases/download/$RELEASE_TAG"
-    for f in linux-image-${KVER}_7.0.11-6_amd64.deb linux-headers-${KVER}_7.0.11-6_amd64.deb; do
+    for f in linux-image-${KVER}_7.0.11-7_amd64.deb linux-headers-${KVER}_7.0.11-7_amd64.deb; do
       log "downloading $f"
       curl -fL --progress-bar "$BASE/$f" -o "$WORK/$f" || die "download failed: $BASE/$f"
     done
@@ -141,7 +141,7 @@ cat > "$ESP/loader/entries/Pop_OS-mbp.conf" <<EOF
 title Pop!_OS $KVER (nouveau runpm)
 linux $POP_REL/vmlinuz-mbp.efi
 initrd $POP_REL/initrd-mbp.img
-options root=UUID=$ROOT_UUID ro quiet splash nouveau.runpm=1
+options root=UUID=$ROOT_UUID ro quiet splash nouveau.runpm=1 intel_iommu=igfx_off i915.enable_fbc=1
 EOF
 STOCK_OPTS=$(awk '/^options/ {sub("^options ",""); print; exit}' "$ESP/loader/entries/Pop_OS-current.conf" 2>/dev/null || true)
 [ -n "$STOCK_OPTS" ] || STOCK_OPTS="root=UUID=$ROOT_UUID ro quiet splash"

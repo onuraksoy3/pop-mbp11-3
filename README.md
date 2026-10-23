@@ -32,8 +32,8 @@ Flags: `--max-0f` (0f boost tier under sustained load — Apple's factory memory
 | `gpu-switch -i` (0xbb) | Sets the `gpu-power-prefs` EFI variable so Intel is the boot GPU |
 | `COSMIC_RENDER_DEVICE`, `WGPU_POWER_PREF` | COSMIC otherwise renders its shell on the NVIDIA card |
 | `dgpu-off.service` | On the **stock** kernel: cut the dGPU at boot (it cannot be woken there) |
-| `linux-image-7.0.11-mbp` | Vanilla 7.0.11 + 16 patches from [reclocked](https://github.com/KrzysztofKowalski/reclocked) that fix the gmux power-cycle hang; built with Pop's own config; `kernel/build.sh` reproduces it |
-| `Pop_OS-mbp.conf` boot entry | `nouveau.runpm=1` only on this kernel; the stock kernel stays a rEFInd click away |
+| `linux-image-7.0.11-mbp` | Vanilla 7.0.11 + 16 patches from [reclocked](https://github.com/KrzysztofKowalski/reclocked) that fix the gmux power-cycle hang, plus `kernel/patches/0018` (Thunderbolt runtime PM); built with Pop's own config; `kernel/build.sh` reproduces it |
+| `Pop_OS-mbp.conf` boot entry | `nouveau.runpm=1 intel_iommu=igfx_off i915.enable_fbc=1` only on this kernel; the stock kernel stays a rEFInd click away |
 | `reclocked` daemon + config | Raises the 750M's clocks under load (nouveau has no governor), controls the fans via applesmc |
 
 ## Day to day
@@ -45,6 +45,20 @@ Flags: `--max-0f` (0f boost tier under sustained load — Apple's factory memory
   check `default` in `/boot/efi/loader/loader.conf`.
 - The HDMI and Thunderbolt display outputs are wired to the NVIDIA GPU; plug a monitor in while a `DRI_PRIME`
   app is running, or run `sudo reclockctl dgpu-on` first.
+
+## Power
+
+`kernel/patches/0018-thunderbolt-runtime-pm-tb2-host.patch` sets `tb->root_switch->rpm = true` in `tb_start()`, so the
+Falcon Ridge TB2 host router and its NHI runtime-suspend (upstream only enables this for USB4 routers). The NHI
+reaches D3hot ~15 s after boot and idle draw fell ~1.7 W: 15.5 → 13.8 W at 10 % brightness, measured with `upower`.
+Booting with `acpi_osi=!Darwin` (the firmware then powers the controller off completely) saved nothing further, so
+the patch captures the whole gain while keeping the ports.
+
+- The remaining ~4 W is the CPU package stuck at PC3: the NVMe (Lexar NM610 PRO) advertises no ASPM. A drive with
+  ASPM L1 (e.g. SK Hynix Gold P31) is the fix.
+- `i915.enable_fbc=1` is set, but FBC stays inactive in practice because cosmic-comp scans out 10-bit (XB30).
+- If Thunderbolt hotplug fails to wake the ports, keep the controller powered:
+  `echo on | sudo tee /sys/bus/pci/devices/0000:08:00.0/power/control`
 
 ## Uninstall
 
