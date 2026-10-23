@@ -127,8 +127,12 @@ if ! dpkg -s "linux-image-$KVER" >/dev/null 2>&1; then
 fi
 [ -f "/boot/vmlinuz-$KVER" ] || die "/boot/vmlinuz-$KVER missing after install"
 if dpkg -s broadcom-sta-dkms >/dev/null 2>&1; then
-  dkms status 2>/dev/null | grep -q "broadcom-sta.*$KVER.*installed" && log "Wi-Fi (broadcom-sta) built for $KVER" \
-    || warn "broadcom-sta did not build for $KVER — Wi-Fi may be missing on that kernel; run: dkms autoinstall -k $KVER"
+  DKMS_STATUS=$(dkms status 2>/dev/null || true)
+  if grep -q "broadcom-sta.*$KVER.*installed" <<<"$DKMS_STATUS"; then
+    log "Wi-Fi (broadcom-sta) built for $KVER"
+  else
+    warn "broadcom-sta did not build for $KVER — Wi-Fi may be missing on that kernel; run: dkms autoinstall -k $KVER"
+  fi
 fi
 cp "/boot/vmlinuz-$KVER" "$POP_DIR/vmlinuz-mbp.efi"
 cp "/boot/initrd.img-$KVER" "$POP_DIR/initrd-mbp.img"
