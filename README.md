@@ -20,7 +20,7 @@ curl -fsSL https://github.com/onuraksoy3/pop-mbp11-3-dgpu/raw/main/install.sh | 
 Then reboot. At rEFInd choose Pop!_OS; the patched kernel boots by default. Run `verify.sh` afterwards
 (`--bench` adds the glmark2 comparison).
 
-Flags: `--max-0f` (Apple's factory memory clock, +20 % GPU throughput, small lock-up risk),
+Flags: `--max-0f` (0f boost tier under sustained load — Apple's factory memory clock, ~+20 %, small lock-up risk),
 `--no-kernel` (Intel-only setup: dGPU off at boot, no patched kernel), `--kernel-dir DIR` (use your own
 `.deb` files).
 

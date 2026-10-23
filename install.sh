@@ -11,6 +11,7 @@
 #   3  The patched kernel 7.0.11-mbp (vanilla 7.0.11 + reclocked's gmux/nouveau power-cycle patches) from the
 #      GitHub release, a separate boot entry with nouveau.runpm=1, rEFInd fallback to the stock kernel.
 #   4  reclocked (pstate governor + fans) built from source, tuned config, service gated to the -mbp kernel.
+#      --max-0f adds the 0f boost tier (Apple's factory memory clock) on top of the 07/0a/0e ladder.
 #
 # Flags:  --max-0f      let reclocked use pstate 0f (Apple's factory memory clock; small lock-up risk)
 #         --no-kernel   skip phase 3 and 4 (Intel-only setup, dGPU off at boot)
@@ -159,9 +160,11 @@ if [ ! -f /etc/reclocked.conf ]; then
   curl -fsSL "https://github.com/$REPO/raw/main/files/reclocked.conf" -o /etc/reclocked.conf \
     || cp "$(dirname "$0")/files/reclocked.conf" /etc/reclocked.conf
 fi
-if [ "$MAX_0F" = 1 ]; then
-  sed -i '/^\[profile default\]/,/^$/ s/^max-pstate = 0e/max-pstate = 0f/; /^\[dgpu-active\]/,/^$/ s/^max = 0e/max = 0f/' /etc/reclocked.conf
-  warn "pstate 0f enabled (Apple's factory memory clock). If the GPU ever freezes, set it back to 0e in /etc/reclocked.conf"
+if [ "$MAX_0F" = 0 ]; then
+  # Conservative: disable the 0f boost tier (keeps the 07/0a/0e ladder only).
+  sed -i '/^\[profile default\]/,/^$/ s/^boost-pstate = 0f/boost-pstate = -1/' /etc/reclocked.conf
+else
+  warn "0f boost enabled (Apple's factory memory clock under sustained load). If the GPU ever freezes, set boost-pstate = -1 in /etc/reclocked.conf"
 fi
 curl -fsSL "https://github.com/$REPO/raw/main/files/reclocked.service" -o /etc/systemd/system/reclocked.service \
   || cp "$(dirname "$0")/files/reclocked.service" /etc/systemd/system/reclocked.service
