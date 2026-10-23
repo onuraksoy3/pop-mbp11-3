@@ -1,0 +1,14 @@
+[Unit]
+Description=Power off the NVIDIA dGPU via vga_switcheroo on the stock kernel (never power it back on; reboot instead)
+After=systemd-modules-load.service sys-kernel-debug.mount
+Before=cosmic-greeter.service display-manager.service
+# On the patched -mbp kernel the card is managed by nouveau runtime PM instead.
+ConditionKernelVersion=!*-mbp
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'for i in $(seq 1 40); do [ -e /sys/kernel/debug/vgaswitcheroo/switch ] && break; sleep 0.25; done; echo OFF > /sys/kernel/debug/vgaswitcheroo/switch'
+
+[Install]
+WantedBy=multi-user.target

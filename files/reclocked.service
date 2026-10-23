@@ -1,0 +1,16 @@
+[Unit]
+Description=reclocked — GT 750M pstate governor and fan control (nouveau, MacBookPro11,3)
+After=graphical.target
+# Only on the patched kernel: elsewhere the dGPU is powered off at boot.
+ConditionKernelVersion=*-mbp
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/reclocked --config /etc/reclocked.conf --exit-state 0a
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical.target
