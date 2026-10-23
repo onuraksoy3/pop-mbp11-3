@@ -29,7 +29,7 @@ Measured on the machine this was built on: Intel 540 vs GT 750M 1063 (`0e`) / 13
 | Phase | What it does | Ticked by default |
 |---|---|---|
 | `wifi` | `broadcom-sta-dkms` (wl driver for the BCM4360) | yes |
-| `intel-boot` | rEFInd + macOS spoof, `gpu-switch -i`, COSMIC on Intel, `dgpu-off.service`, rEFInd entry for OpenCore if found | yes |
+| `intel-boot` | rEFInd + macOS spoof, `gpu-switch -i`, COSMIC on Intel, `dgpu-off.service` | yes |
 | `kernel` | `7.0.11-mbp` and its systemd-boot entry | yes |
 | `reclocked` | GT 750M clocks and fans | yes |
 | `keyd` | key remapping daemon, needed by Clover | no |
@@ -47,6 +47,7 @@ Flags for scripted use (no menu):
 - `--offline DIR` installs from the bundle (below).
 - `--dry-run` shows what would be written and stops.
 - `--allow-11-2` accepts a MacBookPro11,2. It has no NVIDIA GPU, so only wifi, kernel, keyd, clover and clover-dock apply.
+- `--oc-stanza` writes a "macOS (OpenCore)" entry into `refind.conf`. Only needed if rEFInd's own scan doesn't show OpenCore.
 
 `--max-0f`, `--no-kernel` and `--kernel-dir` on their own still do what they did in v0.1: intel-boot, kernel and
 reclocked.
@@ -81,8 +82,9 @@ grid to add them.
 4. Finish the install, reboot into Pop!_OS, and run the one command above (or the offline steps).
 
 You don't need to note partition numbers. The installer takes the root filesystem from `/` and the ESP from
-`/boot/efi`. It finds macOS by scanning every EFI partition for `EFI/OC` or `EFI/APPLE`. If OpenCore is there, rEFInd
-gets a "macOS (OpenCore)" entry.
+`/boot/efi`. It finds macOS by scanning every EFI partition for `EFI/OC` or `EFI/APPLE` and reports what it found.
+rEFInd's own scan picks up OpenCore, so nothing is written for it. If OpenCore doesn't appear in rEFInd, re-run with
+`sudo ./install.sh --phases intel-boot --oc-stanza`.
 
 ## Building the offline bundle
 
@@ -108,7 +110,7 @@ link above keeps working. Rebuild and re-attach it whenever the kernel packages 
 | `Pop_OS-mbp.conf` boot entry | `nouveau.runpm=1 intel_iommu=igfx_off i915.enable_fbc=1` only on this kernel; the stock kernel stays a rEFInd click away |
 | `reclocked` daemon + config | Raises the 750M's clocks under load (nouveau has no governor), controls the fans via applesmc |
 | `broadcom-sta-dkms` | Wi-Fi: the BCM4360 needs Broadcom's `wl` driver |
-| rEFInd "macOS (OpenCore)" entry | Only when `EFI/OC/OpenCore.efi` is found on an EFI partition |
+| rEFInd "macOS (OpenCore)" entry | Only with `--oc-stanza`; rEFInd's scan finds OpenCore on its own |
 | keyd, Clover, Clover Dock | Optional: Mac-style keyboard, trackpad and dock on COSMIC |
 
 ## Day to day

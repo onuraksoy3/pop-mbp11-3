@@ -6,12 +6,13 @@
 - New phases: `wifi` (broadcom-sta-dkms), `keyd`, `clover`, `clover-dock`. Every phase checks its own state and
   skips itself when done.
 - Detection replaces assumptions: root UUID from `/`, ESP from `/boot/efi`, GPUs checked at PCI 00:02.0 / 01:00.0,
-  and OpenCore found on any EFI partition and added to rEFInd. MacBookPro11,2 is accepted with `--allow-11-2`.
+  and OpenCore found on any EFI partition. rEFInd's own scan shows it; `--oc-stanza` writes an explicit entry
+  for setups where it doesn't. MacBookPro11,2 is accepted with `--allow-11-2`.
 - `--dry-run`, logging to `/var/log/pop-mbp11-3-install.log`, and a "MacBook Pro 11,3 Setup" launcher.
 - Offline: `--offline DIR` plus `tools/make-bundle.sh`, which builds `pop-mbp11-3-bundle.tar.gz` for machines
   without Wi-Fi yet.
 - reclocked: re-running without `--max-0f` keeps an existing 0f setting instead of turning it off.
-- uninstall: `--remove-apps`, `--remove-wifi`; it also removes the OpenCore entry and the launcher. verify:
+- uninstall: `--remove-apps`, `--remove-wifi`; it also removes an `--oc-stanza` entry and the launcher. verify:
   checks every phase on any kernel.
 - README: one command, "No Wi-Fi on first boot?", a fresh-install walkthrough, and how to build the bundle.
 

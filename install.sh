@@ -8,7 +8,7 @@
 # Phases (each is checked first and skipped when already done; --all runs them in this order):
 #   wifi         broadcom-sta-dkms (wl driver for the BCM4360)
 #   intel-boot   rEFInd with the macOS spoof, gpu-switch -i (Intel is the boot GPU), COSMIC on Intel,
-#                dgpu-off.service for the stock kernel, an rEFInd entry for OpenCore if macOS is found
+#                dgpu-off.service for the stock kernel (OpenCore is left to rEFInd's own scan)
 #   kernel       7.0.11-mbp (vanilla 7.0.11 + gmux/nouveau power-cycle patches + TB runtime PM), its own
 #                systemd-boot entry with nouveau.runpm=1, rEFInd fallback to the stock kernel
 #   reclocked    pstate governor + fans for the GT 750M, service gated to the -mbp kernel
@@ -24,6 +24,7 @@
 #         --offline D     install from an unpacked pop-mbp11-3-bundle (tools/make-bundle.sh) instead of the network
 #         --dry-run       show what would be written and stop
 #         --allow-11-2    allow a MacBookPro11,2 (no dGPU: wifi, kernel, keyd, clover, clover-dock only)
+#         --oc-stanza     also write a "macOS (OpenCore)" rEFInd entry, if rEFInd's scan does not show OpenCore
 #   --max-0f / --no-kernel / --kernel-dir on their own keep the v0.1 behaviour: intel-boot, kernel, reclocked.
 #
 # Log: /var/log/pop-mbp11-3-install.log. Undo: uninstall.sh. Verify after reboot: verify.sh.
@@ -66,7 +67,7 @@ if [ ! -f "$HERE/files/dgpu-off.service" ]; then
   exec bash "$BOOT/install.sh" "$@"
 fi
 
-MAX_0F=0; NO_KERNEL=0; KERNEL_DIR=""; OFFLINE=""; DRY_RUN=0; ALLOW_11_2=0; PHASES=""; LEGACY=0
+MAX_0F=0; NO_KERNEL=0; KERNEL_DIR=""; OFFLINE=""; DRY_RUN=0; ALLOW_11_2=0; OC_STANZA=0; PHASES=""; LEGACY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --max-0f) MAX_0F=1; LEGACY=1 ;;
@@ -77,7 +78,8 @@ while [ $# -gt 0 ]; do
     --offline) OFFLINE=$(realpath "${2:?--offline needs a directory}"); shift ;;
     --dry-run) DRY_RUN=1 ;;
     --allow-11-2) ALLOW_11_2=1 ;;
-    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
+    --oc-stanza) OC_STANZA=1 ;;
+    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
     *) die "unknown flag: $1 (see --help)" ;;
   esac
   shift
@@ -166,7 +168,8 @@ while read -r dev ptype; do
   [ "${mnt#"$WORK"}" = "$mnt" ] || umount "$mnt"
 done < <(lsblk -rno PATH,PARTTYPE)
 HAS_APFS=0; lsblk -rno PARTTYPE | grep -qx "$APFS_TYPE" && HAS_APFS=1
-if [ -n "$OC_DEV" ]; then MACOS="yes — OpenCore on $OC_DEV (rEFInd entry will be added)"
+if [ -n "$OC_DEV" ]; then
+  MACOS="yes — OpenCore on $OC_DEV ($([ "$OC_STANZA" = 1 ] && echo "rEFInd entry will be added" || echo "auto-detected by rEFInd"))"
 elif [ "$MACOS_SCAN" = 0 ]; then MACOS="$([ "$HAS_APFS" = 1 ] && echo "APFS found; ")OpenCore unknown (scanning ESPs needs root)"
 elif [ -n "$APPLE_DEV" ] || [ "$HAS_APFS" = 1 ]; then MACOS="yes — native boot (${APPLE_DEV:-APFS}); rEFInd finds it, no entry needed"
 else MACOS="no"
@@ -213,7 +216,12 @@ checks_intel-boot() {
   ck "COSMIC_RENDER_DEVICE in /etc/environment" grep -q '^COSMIC_RENDER_DEVICE=' /etc/environment
   ck "WGPU_POWER_PREF in /etc/environment" grep -q '^WGPU_POWER_PREF=' /etc/environment
   ck "dgpu-off.service enabled" systemctl -q is-enabled dgpu-off.service
-  [ -z "$OC_DEV" ] || ck_esp "rEFInd entry for OpenCore on $OC_DEV" oc_block_present
+  # rEFInd's own scan finds EFI/OC/OpenCore.efi; a stanza is only checked for when --oc-stanza asks for one.
+  if [ -n "$OC_DEV" ] && [ "$OC_STANZA" = 1 ]; then
+    ck_esp "rEFInd entry for OpenCore on $OC_DEV (--oc-stanza)" oc_block_present
+  elif [ -n "$OC_DEV" ]; then
+    ck "OpenCore on $OC_DEV: auto-detected by rEFInd (--oc-stanza adds an entry)" true
+  fi
 }
 checks_kernel() {
   ck "linux-image-$KVER is $KPKG" test "$(dpkg-query -W -f='${Version}' "linux-image-$KVER" 2>/dev/null)" = "$KPKG"
@@ -269,7 +277,7 @@ plan_intel-boot() {
   echo "  package  refind efibootmgr git curl switcheroo-control mesa-utils libglib2.0-bin (those missing)"
   [ -f "$ESP/EFI/refind/refind_x64.efi" ] || echo "  file     $ESP/EFI/refind/ (refind-install)"
   echo "  file     $ESP/EFI/refind/refind.conf: spoof_osx_version 10.9"
-  if [ -n "$OC_DEV" ]; then
+  if [ -n "$OC_DEV" ] && [ "$OC_STANZA" = 1 ]; then
     echo "  boot     rEFInd menuentry \"macOS (OpenCore)\": volume $OC_PARTUUID, /EFI/OC/OpenCore.efi"
   fi
   echo "  efivar   BootOrder: rEFInd first"
@@ -441,8 +449,9 @@ phase_intel-boot() {
   else
     echo 'spoof_osx_version 10.9' >> "$conf"
   fi
-  sed -i '/^# pop-mbp11-3 begin/,/^# pop-mbp11-3 end/d' "$conf"
-  if [ -n "$OC_DEV" ]; then
+  # Without --oc-stanza OpenCore is left to rEFInd's scan, and a stanza from an earlier --oc-stanza run is kept.
+  if [ -n "$OC_DEV" ] && [ "$OC_STANZA" = 1 ]; then
+    sed -i '/^# pop-mbp11-3 begin/,/^# pop-mbp11-3 end/d' "$conf"
     cat >> "$conf" <<EOF
 # pop-mbp11-3 begin: OpenCore found on $OC_DEV by install.sh
 menuentry "macOS (OpenCore)" {
