@@ -9,16 +9,32 @@ MacBook Pro 11,3 kit for Pop!_OS 24.04: one guided installer for the 15" Retina 
 - Anything else (2015 models, 13" models, 2012 Retina) — not supported; the installer checks the model and refuses
 
 ## What it sets up
-- Wi-Fi: Broadcom BCM4360 via broadcom-sta (wl) — works, no power-save support in that driver
-- Boot on the Intel GPU: rEFInd with the macOS-version spoof, gpu-switch, COSMIC rendering on Intel
-- NVIDIA GT 750M on demand: patched 7.0.11 kernel with nouveau runtime PM (DynOff at idle, wakes for DRI_PRIME apps, goes back to sleep), reclocked for clocks and fans
+- Wi-Fi: Broadcom BCM4360 via broadcom-sta (`wl`) — works, no power-save support in that driver
+- Boot on the Intel GPU: rEFInd with the macOS-version spoof, gpu-switch, COSMIC rendering on Intel. The Intel GPU drives the panel and the desktop
+- NVIDIA GT 750M on demand: patched 7.0.11 kernel with nouveau runtime PM. The card stays **powered off** (DynOff) until an app launched on it needs it (~1 s to wake, e.g. a `DRI_PRIME` app), runs at full clocks under load, and powers off again a few seconds after the app exits. reclocked sets the clocks and runs the fans on a sane curve
 - Power: Thunderbolt 2 controller runtime-suspends (≈1.7 W saved, the same as a full firmware power-off); iGPU excluded from the IOMMU; measured idle ≈14 W at 10% brightness. The remaining gap to ~10 W is the CPU package held at PC3 by NVMe drives without ASPM — see the [Power section](https://github.com/onuraksoy3/pop-mbp11-3-dgpu#power) of pop-mbp11-3-dgpu
-- Keys and dock (optional): keyd Mac-style shortcuts via Clover, window previews via Clover Dock
+- Keys, trackpad and dock on COSMIC (optional): keyd Mac-style shortcuts and trackpad settings via Clover, window previews via Clover Dock
 - Suspend/resume, battery and backlight work; the stock Pop kernel stays one rEFInd click away as a fallback
 
+The boot, GPU and power pieces come from [pop-mbp11-3-dgpu](https://github.com/onuraksoy3/pop-mbp11-3-dgpu) and are
+not copied here. The kit runs that repo's own `install.sh` (see [Versions and updates](#versions-and-updates)). It
+passes `--only` with the phases you picked, plus `--max-0f`, `--kernel-dir` and `--offline` when they apply. Detection,
+the menu, Wi-Fi, keyd, Clover and the offline bundle live in this repo.
+
 ## Versions and updates
-- Each component follows its newest release by default: the dGPU feature (pop-mbp11-3-dgpu), Clover and Clover Dock. Re-running the installer (or the launcher) updates a component when a newer release exists; installed versions are recorded in /var/lib/pop-mbp11-3/versions.
-- --clover-ref, --clover-dock-ref and --dgpu-ref <tag|commit> pin a specific version; --from-main follows development branches.
+
+Each component follows its newest release by default:
+
+| Component | Default | Override |
+|---|---|---|
+| pop-mbp11-3-dgpu (intel-boot, kernel, reclocked) | newest `vX.Y.Z` tag (its only GitHub release holds the kernel packages) | `--dgpu-ref R` |
+| Clover | latest `vX.Y.Z` release: its `.deb` if one is attached, else built at that tag | `--clover-ref R` |
+| Clover Dock | latest `vX.Y.Z` release, same rule | `--clover-dock-ref R` |
+
+- `R` is a tag, branch, or short or full commit hash; `--from-main` sets all three to `main` (an explicit `--*-ref` still wins). Refs are resolved with `git ls-remote`, so they aren't subject to GitHub's API rate limit. The API is asked once per repo for the release list; if that fails, the newest `vX.Y.Z` tag stands in. A ref that doesn't exist stops the installer.
+- Re-running the installer (or the launcher) updates a component when a newer release exists. Installed versions are recorded in `/var/lib/pop-mbp11-3/versions`; the phase then shows "installed, update available: … v0.5.0 → v0.5.1", the menu ticks it, and `--all` re-runs it. A newer dGPU version re-runs intel-boot, kernel and reclocked together.
+- Something installed before versions were recorded counts as current while you follow the latest release (`--dry-run` shows "installed version not recorded"). It's recorded the next time that phase runs, and naming a ref with `--*-ref` re-runs it.
+- Offline, the bundle's dGPU snapshot is used as is.
 - After booting macOS, the firmware may reset the boot order and GPU preference. Hold Option at power-on to pick rEFInd, or re-run the intel-boot phase — it's idempotent.
 
 Status: beta. Everything here was built and verified on one MacBookPro11,3. A fresh-install run has not yet been done — if you're the first, please open an issue with /var/log/pop-mbp11-3-install.log attached.
@@ -33,19 +49,6 @@ A text menu shows what it detected, lets you pick what to install, and lists eve
 and boot entry before it changes anything. Reboot afterwards. At rEFInd choose Pop!_OS; the patched kernel boots
 by default. Then run `verify.sh` (`--bench` adds the glmark2 comparison). To re-run it later, open
 **MacBook Pro 11,3 Setup** from the app grid. Everything is logged to `/var/log/pop-mbp11-3-install.log`.
-
-## What you get
-
-- Wi-Fi (Broadcom `wl` for the BCM4360).
-- macOS-style GPU switching from [pop-mbp11-3-dgpu](https://github.com/onuraksoy3/pop-mbp11-3-dgpu): the Intel GPU
-  drives the panel and the desktop. The GT 750M stays **powered off** until an app launched on it needs it (~1 s to
-  wake), runs at full clocks under load, and powers off again a few seconds after the app exits. Fans follow a
-  sane curve.
-- Optionally, Mac-style keys, trackpad and dock on COSMIC: keyd, Clover and Clover Dock.
-
-The dGPU phases are not copied here. The kit runs pop-mbp11-3-dgpu's own `install.sh` (see
-[Versions](#versions)). It passes `--only` with the phases you picked, plus `--max-0f`, `--kernel-dir` and `--offline`
-when they apply. Detection, the menu, Wi-Fi, keyd, Clover and the offline bundle live in this repo.
 
 ## Phases and flags
 
@@ -80,23 +83,6 @@ pop-mbp11-3-dgpu's installer.
 
 The installer refuses to run on anything but a MacBookPro11,3. It also checks for the Intel GPU at PCI 00:02.0 and
 the NVIDIA GPU at 01:00.0.
-
-## Versions
-
-| Component | Default | Override |
-|---|---|---|
-| pop-mbp11-3-dgpu (intel-boot, kernel, reclocked) | newest `vX.Y.Z` tag (its only GitHub release holds the kernel packages) | `--dgpu-ref R` |
-| Clover | latest `vX.Y.Z` release: its `.deb` if one is attached, else built at that tag | `--clover-ref R` |
-| Clover Dock | latest `vX.Y.Z` release, same rule | `--clover-dock-ref R` |
-
-`--from-main` sets all three to `main`. Refs go through GitHub's API, so tags, branches and short or full commit
-hashes all work. A ref that doesn't exist stops the installer.
-
-What got installed is recorded in `/var/lib/pop-mbp11-3/versions`. When a newer release exists, the phase shows
-"installed, update available: … v0.5.0 → v0.5.1". The menu ticks it and `--all` re-runs it. A newer dGPU version
-re-runs intel-boot, kernel and reclocked together. Something installed before versions were recorded counts as current
-while you follow the latest release (`--dry-run` shows "installed version not recorded"). It's recorded the next time
-that phase runs, and naming a ref with `--*-ref` re-runs it. Offline, the bundle's dGPU snapshot is used as is.
 
 ## No Wi-Fi on first boot?
 
