@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+- Versions: pop-mbp11-3-dgpu now follows its newest `vX.Y.Z` tag instead of a commit pinned in `install.sh`; Clover
+  and Clover Dock follow their latest `vX.Y.Z` release as before. `--dgpu-ref`, `--clover-ref` and
+  `--clover-dock-ref` take a tag, branch or commit; `--from-main` uses `main` for all three. A ref that doesn't
+  exist is an error.
+- Installed versions are recorded in `/var/lib/pop-mbp11-3/versions`. A newer release shows as "update available",
+  is ticked in the menu, and is re-run by `--all`. Installs from before this are counted as current until they next run.
+- The dry run lists the version of each component and where it came from. `lib/refs.sh` holds the resolver, shared
+  with `tools/make-bundle.sh`, which gains `--dgpu-ref` / `--from-main` and records the snapshot's tag.
+
 ## v0.1.0 — 2026-10-24
 First release of the kit, split out of pop-mbp11-3-dgpu (its history up to a094fa7 is this repo's start).
 - One guided installer: with no flags, a whiptail menu (detection summary, phase checklist with sensible defaults,

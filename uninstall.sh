@@ -61,5 +61,5 @@ if [ "$APPS" = 1 ]; then
   systemctl daemon-reload
   echo "keyd removed (/etc/keyd kept)"
 fi
-rm -rf "$SHARE"
-echo "Kit removed (launcher, $SHARE)."
+rm -rf "$SHARE" /var/lib/pop-mbp11-3
+echo "Kit removed (launcher, $SHARE, version records)."

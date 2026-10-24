@@ -26,20 +26,24 @@
 #         --dry-run       show what would be written and stop
 #         --allow-11-2    allow a MacBookPro11,2 (no dGPU: wifi, keyd, clover, clover-dock only)
 #         --oc-stanza     also write a "macOS (OpenCore)" rEFInd entry, if rEFInd's scan does not show OpenCore
+#         --dgpu-ref R    pop-mbp11-3-dgpu at tag/commit R instead of its newest vX.Y.Z tag
+#         --clover-ref R, --clover-dock-ref R   Clover / Clover Dock at tag/commit R instead of the latest release
+#         --from-main     main of all three (developer shortcut; explicit --*-ref flags still win)
 #   --max-0f / --no-kernel / --kernel-dir on their own keep the v0.1 behaviour: intel-boot, kernel, reclocked.
+#   Installed versions are recorded in /var/lib/pop-mbp11-3/versions; a newer release shows as an update.
 #
 # Log: /var/log/pop-mbp11-3-install.log. Undo: uninstall.sh. Verify after reboot: verify.sh.
 set -euo pipefail
 
 REPO="onuraksoy3/pop-mbp11-3"
 REF=${MBP_REF:-main}
-# The dGPU phases are pop-mbp11-3-dgpu's own install.sh at this commit (tag v0.1.3); this kit keeps no copy.
+# The dGPU phases are pop-mbp11-3-dgpu's own install.sh; this kit keeps no copy. The kernel names below are
+# fallbacks: the fetched dGPU installer's own values replace them.
 DGPU_REPO="onuraksoy3/pop-mbp11-3-dgpu"
-DGPU_TAG="v0.1.3"
-DGPU_REV="d1965849d0c5e788ce8019cdc9c19564ddeb24f9"
 RELEASE_TAG="kernel-7.0.11-mbp"
 KVER="7.0.11-mbp"
 KPKG="7.0.11-7"
+VERSIONS=/var/lib/pop-mbp11-3/versions
 KEYD_REPO="https://github.com/rvaiya/keyd"
 KEYD_TAG="v2.6.0"
 CLOVER_REPO="onuraksoy3/cosmic-ext-applet-clover"
@@ -70,6 +74,7 @@ if [ ! -f "$HERE/uninstall.sh" ]; then
 fi
 
 MAX_0F=0; NO_KERNEL=0; KERNEL_DIR=""; OFFLINE=""; DRY_RUN=0; ALLOW_11_2=0; OC_STANZA=0; PHASES=""; LEGACY=0
+declare -A REF_ARG=([dgpu]="" [clover]="" [clover-dock]=""); FROM_MAIN=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --max-0f) MAX_0F=1; LEGACY=1 ;;
@@ -81,11 +86,18 @@ while [ $# -gt 0 ]; do
     --dry-run) DRY_RUN=1 ;;
     --allow-11-2) ALLOW_11_2=1 ;;
     --oc-stanza) OC_STANZA=1 ;;
-    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
+    --dgpu-ref) REF_ARG[dgpu]=${2:?--dgpu-ref needs a tag or commit}; shift ;;
+    --clover-ref) REF_ARG[clover]=${2:?--clover-ref needs a tag or commit}; shift ;;
+    --clover-dock-ref) REF_ARG[clover-dock]=${2:?--clover-dock-ref needs a tag or commit}; shift ;;
+    --from-main) FROM_MAIN=1 ;;
+    -h|--help) sed -n '2,35p' "$0"; exit 0 ;;
     *) die "unknown flag: $1 (see --help)" ;;
   esac
   shift
 done
+if [ "$FROM_MAIN" = 1 ]; then
+  for c in dgpu clover clover-dock; do [ -n "${REF_ARG[$c]}" ] || REF_ARG[$c]=main; done
+fi
 for p in $PHASES; do case " $ALL_PHASES " in *" $p "*) ;; *) die "unknown phase: $p (phases: $ALL_PHASES)" ;; esac; done
 if [ -z "$PHASES" ] && [ "$LEGACY" = 1 ]; then
   PHASES="intel-boot kernel reclocked"
@@ -184,6 +196,62 @@ TARGET_USER=${SUDO_USER:-}
 [ "$TARGET_USER" = root ] && TARGET_USER=""
 TARGET_HOME=""; [ -n "$TARGET_USER" ] && TARGET_HOME=$(getent passwd "$TARGET_USER" | cut -d: -f6)
 
+# ------------------------------------------------------------------ versions
+# Clover, Clover Dock and pop-mbp11-3-dgpu are fetched at the newest vX.Y.Z release (or, for a repo with no such
+# release, its newest vX.Y.Z tag: pop-mbp11-3-dgpu's only release holds the kernel packages), unless --*-ref or
+# --from-main names a tag, branch or commit.
+. "$HERE/lib/refs.sh"
+# What each component should be at (W_*), and how that was chosen (W_HOW).
+declare -A W_REF=([dgpu]="" [clover]="" [clover-dock]="") W_SHA=([dgpu]="" [clover]="" [clover-dock]="")
+declare -A W_DEB=([dgpu]=- [clover]=- [clover-dock]=-) W_HOW=([dgpu]="" [clover]="" [clover-dock]="")
+want_version() {
+  local c=$1 repo=$2 r
+  W_HOW[$c]="latest release"; [ "$c" = dgpu ] && W_HOW[$c]="newest vX.Y.Z tag"
+  if [ -n "${REF_ARG[$c]}" ]; then W_HOW[$c]="--$c-ref"; [ "$FROM_MAIN" = 1 ] && [ "${REF_ARG[$c]}" = main ] && W_HOW[$c]="--from-main"; fi
+  if r=$(resolve "$repo" "${REF_ARG[$c]}"); then read -r "W_REF[$c]" "W_SHA[$c]" "W_DEB[$c]" <<<"$r"
+  elif [ -n "${REF_ARG[$c]}" ]; then die "$repo has no tag, branch or commit '${REF_ARG[$c]}' (or GitHub is not reachable)"
+  else warn "could not find the latest $repo version (GitHub not reachable?)"; fi
+}
+recorded() { awk -v c="$1" '$1 == c {print $2, $3}' "$VERSIONS" 2>/dev/null | tail -1; }
+record() {
+  mkdir -p "${VERSIONS%/*}"
+  { grep -v "^$1 " "$VERSIONS" 2>/dev/null || true; echo "$1 $2 $3"; } > "$VERSIONS.new" && mv "$VERSIONS.new" "$VERSIONS"
+}
+
+# pop-mbp11-3-dgpu: the bundle's snapshot offline; otherwise a copy at the wanted commit (this bundle, the installed
+# copy, or a download). Its install.sh also supplies the kernel version the checks expect.
+DGPU_DIR=""
+fetch_dgpu() {
+  local d
+  if [ -n "$OFFLINE" ]; then
+    [ -f "$OFFLINE/dgpu/install.sh" ] || return 1
+    DGPU_DIR="$OFFLINE/dgpu"; W_REF[dgpu]=$(cat "$DGPU_DIR/.tag" 2>/dev/null || echo bundle)
+    W_SHA[dgpu]=$(cat "$DGPU_DIR/.rev" 2>/dev/null || true); W_HOW[dgpu]="bundle"; return 0
+  fi
+  [ -n "${W_SHA[dgpu]}" ] || return 1
+  for d in "$HERE/dgpu" "$SHARE/dgpu"; do
+    if [ -f "$d/install.sh" ] && [ "$(cat "$d/.rev" 2>/dev/null)" = "${W_SHA[dgpu]}" ]; then DGPU_DIR=$d; return 0; fi
+  done
+  mkdir -p "$WORK/dgpu"
+  curl -fsSL "https://github.com/$DGPU_REPO/archive/${W_SHA[dgpu]}.tar.gz" | tar xz -C "$WORK/dgpu" --strip-components=1 || return 1
+  echo "${W_SHA[dgpu]}" > "$WORK/dgpu/.rev"; echo "${W_REF[dgpu]}" > "$WORK/dgpu/.tag"
+  DGPU_DIR="$WORK/dgpu"
+}
+conf() { sed -n "s/^$1=\"\(.*\)\"$/\1/p" "$2" | head -1; }
+if [ "$HAS_DGPU" = 1 ]; then
+  [ -n "$OFFLINE" ] || want_version dgpu "$DGPU_REPO"
+  if fetch_dgpu; then
+    for v in KVER KPKG RELEASE_TAG; do x=$(conf "$v" "$DGPU_DIR/install.sh"); [ -z "$x" ] || printf -v "$v" '%s' "$x"; done
+  else
+    warn "pop-mbp11-3-dgpu is not available; its phases cannot run"
+  fi
+  [ -z "$KIMG" ] || KPKG=$(dpkg-deb -f "$KIMG" Version)
+fi
+if [ -z "$OFFLINE" ] && [ -n "$TARGET_USER" ]; then
+  want_version clover "$CLOVER_REPO"
+  want_version clover-dock "$CLOVER_DOCK_REPO"
+fi
+
 # ------------------------------------------------------------------ state checks
 pkg_installed() { [ "$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null)" = "install ok installed" ]; }
 # gpu-power-prefs is not visible after boot; boot_vga shows whether the firmware actually booted on Intel.
@@ -207,6 +275,25 @@ ck() {
 ck_esp() {
   if [ -r "$ESP/EFI" ]; then ck "$@"; else CK_LINES+=("??    $1 (ESP unreadable: needs root)"); CK_UNKNOWN+=("$1"); fi
 }
+# Installed version against the wanted one. With no record (installed before versions were recorded) it counts as
+# current while following the latest release, and as missing when a ref was named.
+ck_version() {
+  local c=$1 name=$2 ref sha
+  read -r ref sha <<<"$(recorded "$c")"
+  if [ -z "${W_SHA[$c]}" ]; then
+    CK_LINES+=("INFO  $name: wanted version unknown (GitHub not reachable)")
+  elif [ -z "$sha" ]; then
+    if [ "${W_HOW[$c]}" = "${W_HOW[$c]#--}" ]; then
+      CK_LINES+=("INFO  $name: installed version not recorded; counted as current (${W_REF[$c]} is ${W_HOW[$c]})")
+    else
+      ck "$name at ${W_REF[$c]} (${W_HOW[$c]}; installed version not recorded)" false
+    fi
+  elif [ "$sha" = "${W_SHA[$c]}" ]; then
+    CK_LINES+=("PASS  $name at ${W_REF[$c]} (${sha:0:7})")
+  else
+    CK_LINES+=("FAIL  update: $name $ref → ${W_REF[$c]}"); CK_FAIL+=("update: $name $ref → ${W_REF[$c]}")
+  fi
+}
 run_checks() { CK_LINES=(); CK_FAIL=(); CK_UNKNOWN=(); "checks_$1"; }
 is_done() { run_checks "$1"; [ ${#CK_FAIL[@]} = 0 ] && [ ${#CK_UNKNOWN[@]} = 0 ]; }
 
@@ -224,25 +311,28 @@ checks_intel-boot() {
   elif [ -n "$OC_DEV" ]; then
     ck "OpenCore on $OC_DEV: auto-detected by rEFInd (--oc-stanza adds an entry)" true
   fi
+  ck_version dgpu pop-mbp11-3-dgpu
 }
 checks_kernel() {
   ck "linux-image-$KVER is $KPKG" test "$(dpkg-query -W -f='${Version}' "linux-image-$KVER" 2>/dev/null)" = "$KPKG"
   ck_esp "boot entry Pop_OS-mbp.conf" test -f "$ESP/loader/entries/Pop_OS-mbp.conf"
   ck_esp "ESP vmlinuz-mbp.efi matches /boot" cmp -s "/boot/vmlinuz-$KVER" "$POP_DIR/vmlinuz-mbp.efi"
   ck_esp "loader.conf default Pop_OS-mbp.conf" grep -q '^default Pop_OS-mbp.conf' "$ESP/loader/loader.conf"
+  ck_version dgpu pop-mbp11-3-dgpu
 }
 checks_reclocked() {
   ck "reclocked and reclockctl in /usr/local/bin" test -x /usr/local/bin/reclocked -a -x /usr/local/bin/reclockctl
   ck "/etc/reclocked.conf present" test -f /etc/reclocked.conf
   ck "reclocked.service enabled" systemctl -q is-enabled reclocked.service
   ck "boost-pstate = $WANT_BOOST" test "$(boost_current)" = "$WANT_BOOST"
+  ck_version dgpu pop-mbp11-3-dgpu
 }
 checks_keyd() {
   ck "keyd binary" command -v keyd
   ck "keyd.service enabled" systemctl -q is-enabled keyd
 }
-checks_clover() { ck "clover-applet for ${TARGET_USER:-?}" user_has clover-applet; }
-checks_clover-dock() { ck "clover-dock for ${TARGET_USER:-?}" user_has clover-dock; }
+checks_clover() { ck "clover-applet for ${TARGET_USER:-?}" user_has clover-applet; ck_version clover Clover; }
+checks_clover-dock() { ck "clover-dock for ${TARGET_USER:-?}" user_has clover-dock; ck_version clover-dock "Clover Dock"; }
 
 # Why a phase cannot run here (empty: it can).
 unavailable() {
@@ -258,6 +348,8 @@ status() {
   [ -z "$why" ] || { echo "n/a: $why"; return; }
   run_checks "$1"
   if [ ${#CK_FAIL[@]} = 0 ] && [ ${#CK_UNKNOWN[@]} = 0 ]; then echo installed
+  elif [ ${#CK_UNKNOWN[@]} = 0 ] && ! printf '%s\n' "${CK_FAIL[@]}" | grep -qv '^update: '; then
+    echo "installed, update available: ${CK_FAIL[0]#update: }"
   elif [ ${#CK_FAIL[@]} = 0 ]; then echo "unknown: run as root to check the ESP"
   elif [ ${#CK_FAIL[@]} = ${#CK_LINES[@]} ]; then echo "not installed"
   else echo "partly installed, missing: ${CK_FAIL[0]}$([ ${#CK_FAIL[@]} -gt 1 ] && echo " (+$((${#CK_FAIL[@]} - 1)) more)")"
@@ -316,15 +408,17 @@ plan_clover() {
   echo "  package  just pkg-config cmake and the libcosmic -dev packages (those missing)"
   [ -x "$TARGET_HOME/.cargo/bin/cargo" ] || echo "  file     $TARGET_HOME/.cargo, $TARGET_HOME/.rustup (rustup, minimal profile)"
   echo "  file     $TARGET_HOME/.local/bin/clover-applet + clover helpers, $TARGET_HOME/.local/share/clover/"
-  echo "           (latest $CLOVER_REPO release: .deb if attached, else built in $TARGET_HOME/src/clover-build)"
+  echo "           ($CLOVER_REPO ${W_REF[clover]} ${W_SHA[clover]:0:7}: $([ "${W_DEB[clover]}" != - ] && echo "release .deb" || echo "built in $TARGET_HOME/src/clover-build"))"
 }
 plan_clover-dock() {
   echo "  package  build-essential pkg-config git libxkbcommon-dev libwayland-dev libssl-dev (those missing)"
   echo "  file     $TARGET_HOME/.local/bin/clover-dock, ~/.local/share/applications/io.github.onuraksoy3.CloverDock.desktop"
   echo "  file     ~/.config/cosmic/com.system76.CosmicPanel.Dock/v1/plugins_center: App Tray → Clover Dock (backup kept)"
+  echo "           ($CLOVER_DOCK_REPO ${W_REF[clover-dock]} ${W_SHA[clover-dock]:0:7}: $([ "${W_DEB[clover-dock]}" != - ] && echo "release .deb" || echo "built in $TARGET_HOME/src/clover-dock"))"
 }
 plan_common() {
-  echo "  file     $SHARE/ (copy of this installer, verify.sh, uninstall.sh, dgpu/ = pop-mbp11-3-dgpu $DGPU_TAG)"
+  echo "  file     $SHARE/ (copy of this installer, verify.sh, uninstall.sh, lib/, dgpu/ = pop-mbp11-3-dgpu ${W_REF[dgpu]:-?})"
+  echo "  file     $VERSIONS (installed versions of what this run fetched)"
   echo "  file     $LAUNCHER (\"MacBook Pro 11,3 Setup\")"
   echo "  file     $LOG"
 }
@@ -340,6 +434,11 @@ macOS:        $MACOS
 Kernel:       $CUR_KERNEL
 Source:       ${OFFLINE:-network}
 User:         ${TARGET_USER:-none}
+Versions:
+$(for c in dgpu clover clover-dock; do
+    [ -n "${W_REF[$c]}${W_HOW[$c]}" ] || continue
+    printf '  %-12s %s\n' "$c" "${W_REF[$c]:-?} ${W_SHA[$c]:0:7} (${W_HOW[$c]}; installed: $(recorded "$c" | cut -d' ' -f1 | grep . || echo "not recorded"))"
+  done)
 
 Phases:
 $(for p in $ALL_PHASES; do printf '  %-12s %s\n' "$p" "$(status "$p")"; done)
@@ -356,7 +455,7 @@ order() {
 dgpu_phases() { local p out=""; for p in $SEL; do case "$p" in intel-boot|kernel|reclocked) out="$out,$p" ;; esac; done; echo "${out#,}"; }
 plan_all() {
   if [ -n "$(dgpu_phases)" ]; then
-    echo "[pop-mbp11-3-dgpu $DGPU_TAG]"
+    echo "[pop-mbp11-3-dgpu ${W_REF[dgpu]:-?} ${W_SHA[dgpu]:0:7} (${W_HOW[dgpu]})]"
     echo "  run      install.sh --only $(dgpu_phases) (writes what intel-boot / kernel / reclocked list below)"
   fi
   for p in $SEL; do echo "[$p]"; "plan_$p"; done
@@ -385,6 +484,7 @@ else
       st=$(status "$p")
       on=OFF
       case "$p" in wifi|intel-boot|kernel|reclocked) [ "$st" = installed ] || on=ON ;; esac
+      case "$st" in "installed, update available"*) on=ON ;; esac
       items+=("$p" "$st" "$on")
     done
     [ "$HAS_DGPU" = 1 ] && items+=("0f-boost" "reclocked: Apple's factory memory clock (small lock-up risk)" "$([ "$WANT_BOOST" = 0f ] && echo ON || echo OFF)")
@@ -405,7 +505,7 @@ fi
 # ------------------------------------------------------------------ run
 touch "$LOG"; chmod 644 "$LOG"
 exec > >(tee -a "$LOG") 2>&1
-echo; echo "===== $(date -Is) install.sh ${SEL:-<nothing>} (ref $REF${OFFLINE:+, offline $OFFLINE})"
+echo; echo "===== $(date -Is) install.sh ${SEL:-<nothing>} (ref $REF${OFFLINE:+, offline $OFFLINE}; dgpu ${W_REF[dgpu]:-n/a}, clover ${W_REF[clover]:-n/a}, clover-dock ${W_REF[clover-dock]:-n/a})"
 export DEBIAN_FRONTEND=noninteractive
 
 # apt against the network, or against the bundle's local repository only.
@@ -422,14 +522,6 @@ apt_install() {
   apt-get "${APT_OPTS[@]}" install -y -q "${missing[@]}"
 }
 as_user() { runuser -u "$TARGET_USER" -- env HOME="$TARGET_HOME" PATH="$TARGET_HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" "$@"; }
-# Latest release of a GitHub repo: prints "<tag> <url of the first .deb asset or empty>".
-gh_latest() {
-  curl -fsSL "https://api.github.com/repos/$1/releases/latest" | python3 -I -c '
-import json, sys
-r = json.load(sys.stdin)
-debs = [a["browser_download_url"] for a in r.get("assets", []) if a["name"].endswith("_amd64.deb") or a["name"].endswith("_all.deb")]
-print(r["tag_name"], debs[0] if debs else "")'
-}
 ensure_rust() {
   [ -x "$TARGET_HOME/.cargo/bin/cargo" ] && return 0
   log "installing rustup for $TARGET_USER (Ubuntu's rustc is too old for libcosmic)"
@@ -442,19 +534,6 @@ phase_wifi() {
   modprobe wl 2>/dev/null && log "wl loaded" || warn "wl did not load now; it will after a reboot"
 }
 
-# pop-mbp11-3-dgpu at $DGPU_REV: from the bundle or the installed copy when they hold that revision, else downloaded.
-fetch_dgpu() {
-  local d
-  for d in "${OFFLINE:+$OFFLINE/dgpu}" "$HERE/dgpu"; do
-    if [ -n "$d" ] && [ -f "$d/install.sh" ] && [ "$(cat "$d/.rev" 2>/dev/null)" = "$DGPU_REV" ]; then DGPU_DIR=$d; return; fi
-  done
-  [ -z "$OFFLINE" ] || die "the bundle has no pop-mbp11-3-dgpu $DGPU_TAG snapshot (dgpu/); rebuild it with tools/make-bundle.sh"
-  DGPU_DIR="$WORK/dgpu"; mkdir -p "$DGPU_DIR"
-  curl -fsSL "https://github.com/$DGPU_REPO/archive/$DGPU_REV.tar.gz" | tar xz -C "$DGPU_DIR" --strip-components=1 \
-    || die "could not download $DGPU_REPO $DGPU_TAG"
-  echo "$DGPU_REV" > "$DGPU_DIR/.rev"
-}
-
 # intel-boot, kernel and reclocked in one call to the dGPU installer; then the two settings it does not cover.
 run_dgpu() {
   local phases args
@@ -463,8 +542,10 @@ run_dgpu() {
   [ "$WANT_BOOST" = 0f ] && args+=(--max-0f)
   [ -n "$KERNEL_DIR" ] && args+=(--kernel-dir "$KERNEL_DIR")
   [ -n "$OFFLINE" ] && args+=(--offline "$OFFLINE")
-  log "pop-mbp11-3-dgpu $DGPU_TAG: install.sh ${args[*]}"
+  [ -n "$DGPU_DIR" ] || die "pop-mbp11-3-dgpu could not be fetched (see the warning above)"
+  log "pop-mbp11-3-dgpu ${W_REF[dgpu]} (${W_SHA[dgpu]:0:7}): install.sh ${args[*]}"
   bash "$DGPU_DIR/install.sh" "${args[@]}" || die "pop-mbp11-3-dgpu install.sh failed"
+  record dgpu "${W_REF[dgpu]}" "${W_SHA[dgpu]:-unknown}"
   case ",$phases," in *,reclocked,*)
     # The dGPU installer only ever lowers boost-pstate; set it either way so the checklist's 0f choice sticks.
     sed -i "/^\[profile default\]/,/^\$/ s/^boost-pstate = .*/boost-pstate = $WANT_BOOST/" /etc/reclocked.conf ;;
@@ -507,20 +588,20 @@ phase_keyd() {
   systemctl enable --now keyd >/dev/null 2>&1 || warn "keyd did not start; see: journalctl -u keyd"
 }
 
-# Install a .deb asset from the latest release if there is one; returns 1 when the caller should build.
+# The wanted version's release .deb if it has one; returns 1 when the caller should build from source instead.
 install_release_deb() {
-  local tag url
-  read -r tag url < <(gh_latest "$1") || die "cannot query the $1 releases"
-  RELEASE=$tag
-  [ -n "$url" ] || return 1
-  log "installing $(basename "$url") from $1 $tag"
+  local c=$1 url
+  [ -n "${W_SHA[$c]}" ] || die "could not resolve the $c version (see the warning above)"
+  url=${W_DEB[$c]}
+  [ "$url" != - ] || return 1
+  log "installing $(basename "$url") ($c ${W_REF[$c]})"
   curl -fL --progress-bar "$url" -o "$WORK/$(basename "$url")" || die "download failed: $url"
   apt_install "$WORK/$(basename "$url")" || die "installing $(basename "$url") failed"
 }
 
 phase_clover() {
   log "clover (for $TARGET_USER)"
-  install_release_deb "$CLOVER_REPO" && return 0
+  install_release_deb clover && { record clover "${W_REF[clover]}" "${W_SHA[clover]}"; return 0; }
   apt_install git curl just pkg-config cmake libxkbcommon-dev libwayland-dev libfontconfig-dev libfreetype-dev \
     libexpat1-dev libinput-dev libudev-dev libdbus-1-dev libssl-dev libglib2.0-bin libnotify-bin
   ensure_rust
@@ -528,15 +609,16 @@ phase_clover() {
   as_user mkdir -p "$TARGET_HOME/src"
   [ -d "$src/.git" ] || as_user git clone -q "https://github.com/$CLOVER_REPO" "$src"
   as_user git -C "$src" fetch -q --tags origin
-  as_user git -C "$src" checkout -q -f "$RELEASE"
-  log "building Clover $RELEASE (first time ~10–15 min)"
+  as_user git -C "$src" checkout -q -f "${W_SHA[clover]}"
+  log "building Clover ${W_REF[clover]} (first time ~10–15 min)"
   as_user sh -c "cd '$src' && just build-release && just prefix='$TARGET_HOME/.local' install" || die "Clover build failed"
+  record clover "${W_REF[clover]}" "${W_SHA[clover]}"
   log "Clover installed. Add it: Settings → Desktop → Panel → Configure applets → Clover; its first-run page finishes keyd setup"
 }
 
 phase_clover-dock() {
   log "clover-dock (for $TARGET_USER)"
-  install_release_deb "$CLOVER_DOCK_REPO" && return 0
+  install_release_deb clover-dock && { record clover-dock "${W_REF[clover-dock]}" "${W_SHA[clover-dock]}"; return 0; }
   apt_install build-essential pkg-config git curl libxkbcommon-dev libwayland-dev libssl-dev
   ensure_rust
   # build.sh calls "sudo apt-get install" for the packages installed above; a shim stands in for sudo so the
@@ -548,15 +630,16 @@ phase_clover-dock() {
   as_user mkdir -p "$TARGET_HOME/src"
   [ -d "$src/.git" ] || as_user git clone -q "https://github.com/$CLOVER_DOCK_REPO" "$src"
   as_user git -C "$src" fetch -q --tags origin
-  as_user git -C "$src" checkout -q -f "$RELEASE"
+  as_user git -C "$src" checkout -q -f "${W_SHA[clover-dock]}"
   runuser -u "$TARGET_USER" -- env HOME="$TARGET_HOME" PATH="$WORK/shim:$TARGET_HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
     bash "$src/build.sh" || die "Clover Dock build failed"
+  record clover-dock "${W_REF[clover-dock]}" "${W_SHA[clover-dock]}"
 }
 
 install_launcher() {
   if [ "$HERE" != "$SHARE" ]; then
     rm -rf "$SHARE"; mkdir -p "$SHARE"
-    cp -r "$HERE/install.sh" "$HERE/verify.sh" "$HERE/uninstall.sh" "$SHARE/"
+    cp -r "$HERE/install.sh" "$HERE/verify.sh" "$HERE/uninstall.sh" "$HERE/lib" "$SHARE/"
   fi
   if [ -n "$DGPU_DIR" ] && [ "$DGPU_DIR" != "$SHARE/dgpu" ]; then rm -rf "$SHARE/dgpu"; cp -r "$DGPU_DIR" "$SHARE/dgpu"; fi
   cat > "$LAUNCHER" <<EOF
@@ -571,7 +654,6 @@ Terminal=false
 EOF
 }
 
-DGPU_DIR=""; [ "$HAS_DGPU" = 0 ] || fetch_dgpu
 for p in $SEL; do
   case "$p" in
     intel-boot|kernel|reclocked) [ -n "${DGPU_DONE:-}" ] || { run_dgpu; DGPU_DONE=1; } ;;

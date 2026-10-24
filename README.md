@@ -23,10 +23,9 @@ by default. Then run `verify.sh` (`--bench` adds the glmark2 comparison). To re-
   sane curve.
 - Optionally, Mac-style keys, trackpad and dock on COSMIC: keyd, Clover and Clover Dock.
 
-The dGPU phases are not copied here. The kit runs pop-mbp11-3-dgpu's own `install.sh` at a pinned commit
-(`DGPU_TAG` / `DGPU_REV` in `install.sh`, currently v0.1.3). It passes `--only` with the phases you picked, plus
-`--max-0f`, `--kernel-dir` and `--offline` when they apply. Detection, the menu, Wi-Fi, keyd, Clover and the offline
-bundle live in this repo.
+The dGPU phases are not copied here. The kit runs pop-mbp11-3-dgpu's own `install.sh` (see
+[Versions](#versions)). It passes `--only` with the phases you picked, plus `--max-0f`, `--kernel-dir` and `--offline`
+when they apply. Detection, the menu, Wi-Fi, keyd, Clover and the offline bundle live in this repo.
 
 ## Phases and flags
 
@@ -53,12 +52,31 @@ Flags for scripted use (no menu):
 - `--dry-run` shows what would be written and stops.
 - `--allow-11-2` accepts a MacBookPro11,2. It has no NVIDIA GPU, so only wifi, keyd, clover and clover-dock apply.
 - `--oc-stanza` writes a "macOS (OpenCore)" entry into `refind.conf`. Only needed if rEFInd's own scan doesn't show OpenCore.
+- `--dgpu-ref R`, `--clover-ref R`, `--clover-dock-ref R` use a tag, branch or commit instead of the latest release.
+- `--from-main` uses `main` of all three (a developer shortcut; an explicit `--*-ref` still wins).
 
 `--max-0f`, `--no-kernel` and `--kernel-dir` on their own run intel-boot, kernel and reclocked, like
 pop-mbp11-3-dgpu's installer.
 
 The installer refuses to run on anything but a MacBookPro11,3. It also checks for the Intel GPU at PCI 00:02.0 and
 the NVIDIA GPU at 01:00.0.
+
+## Versions
+
+| Component | Default | Override |
+|---|---|---|
+| pop-mbp11-3-dgpu (intel-boot, kernel, reclocked) | newest `vX.Y.Z` tag (its only GitHub release holds the kernel packages) | `--dgpu-ref R` |
+| Clover | latest `vX.Y.Z` release: its `.deb` if one is attached, else built at that tag | `--clover-ref R` |
+| Clover Dock | latest `vX.Y.Z` release, same rule | `--clover-dock-ref R` |
+
+`--from-main` sets all three to `main`. Refs go through GitHub's API, so tags, branches and short or full commit
+hashes all work. A ref that doesn't exist stops the installer.
+
+What got installed is recorded in `/var/lib/pop-mbp11-3/versions`. When a newer release exists, the phase shows
+"installed, update available: … v0.5.0 → v0.5.1". The menu ticks it and `--all` re-runs it. A newer dGPU version
+re-runs intel-boot, kernel and reclocked together. Something installed before versions were recorded counts as current
+while you follow the latest release (`--dry-run` shows "installed version not recorded"). It's recorded the next time
+that phase runs, and naming a ref with `--*-ref` re-runs it. Offline, the bundle's dGPU snapshot is used as is.
 
 ## No Wi-Fi on first boot?
 
@@ -103,9 +121,9 @@ gh release upload <tag> ~/src/pop-mbp11-3-bundle.tar.gz -R onuraksoy3/pop-mbp11-
 Attach it to the newest release, which must be marked latest, so the `releases/latest/download` link above keeps
 working. Rebuild and re-attach it whenever `install.sh` or the dGPU pin changes.
 
-To move to a newer pop-mbp11-3-dgpu: tag it there, set `DGPU_TAG` and `DGPU_REV` in `install.sh`, and rebuild the
-bundle. `make-bundle.sh` reads the pin, the kernel version, and the reclocked and gpu-switch sources from those
-two places.
+The bundle's dGPU snapshot is pop-mbp11-3-dgpu's newest `vX.Y.Z` tag at build time (`--dgpu-ref R` or `--from-main`
+to choose another). `make-bundle.sh` takes the kernel version and the reclocked and gpu-switch sources from that
+snapshot's `install.sh`. Rebuild the bundle after a new dGPU tag.
 
 ## Day to day
 

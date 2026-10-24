@@ -1,8 +1,8 @@
 #!/bin/bash
 # tools/make-bundle.sh — build pop-mbp11-3-bundle.tar.gz for installing without a network (no Wi-Fi driver yet).
 # Run as your normal user on any Pop!_OS 24.04 machine with internet (sudo is used only to install build tools):
-#   tools/make-bundle.sh [--kernel-dir D] [--out DIR]
-# Contents: install.sh, verify.sh, uninstall.sh, dgpu/ (pop-mbp11-3-dgpu at the revision install.sh pins),
+#   tools/make-bundle.sh [--kernel-dir D] [--out DIR] [--dgpu-ref R | --from-main]
+# Contents: install.sh, verify.sh, uninstall.sh, lib/, dgpu/ (pop-mbp11-3-dgpu at its newest vX.Y.Z tag, or R),
 # debs/kernel/ (7.0.11-7), debs/apt/ (broadcom-sta-dkms, refind, build tools and the rest of their dependency
 # closure, indexed as a local apt repository), debs/keyd/ (keyd built into a .deb), src/ (reclocked and gpu-switch
 # sources, at the URLs the dGPU installer uses).
@@ -20,12 +20,14 @@ APT_PKGS="broadcom-sta-dkms dkms refind efibootmgr git curl switcheroo-control m
 log() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
-KERNEL_DIR=""; OUT=$PWD
+KERNEL_DIR=""; OUT=$PWD; DGPU_ARG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --kernel-dir) KERNEL_DIR=$(realpath "$2"); shift ;;
     --out) OUT=$(realpath "$2"); shift ;;
-    -h|--help) sed -n '2,9p' "$0"; exit 0 ;;
+    --dgpu-ref) DGPU_ARG=$2; shift ;;
+    --from-main) [ -n "$DGPU_ARG" ] || DGPU_ARG=main ;;
+    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
     *) die "unknown flag: $1" ;;
   esac
   shift
@@ -35,13 +37,13 @@ done
 [ "${ID:-}" = pop ] && [ "${VERSION_ID:-}" = 24.04 ] || die "build the bundle on Pop!_OS 24.04 so the packages match"
 
 TOP=$(cd "$(dirname "$0")/.." && pwd)
-# One source of truth: the dGPU pin and kernel version come from install.sh, the reclocked and gpu-switch
-# sources from the pinned dGPU installer.
+# One source of truth: the dGPU version is picked like install.sh picks it (lib/refs.sh); the kernel version and the
+# reclocked and gpu-switch sources come from that dGPU installer.
+. "$TOP/lib/refs.sh"
 conf() { sed -n "s/^$1=\"\(.*\)\"$/\1/p" "$2" | head -1; }
-DGPU_REPO=$(conf DGPU_REPO "$TOP/install.sh"); DGPU_TAG=$(conf DGPU_TAG "$TOP/install.sh")
-DGPU_REV=$(conf DGPU_REV "$TOP/install.sh"); RELEASE_TAG=$(conf RELEASE_TAG "$TOP/install.sh")
-KVER=$(conf KVER "$TOP/install.sh"); KPKG=$(conf KPKG "$TOP/install.sh")
-[ -n "$DGPU_REV" ] && [ -n "$KPKG" ] || die "could not read the dGPU pin from $TOP/install.sh"
+DGPU_REPO=$(conf DGPU_REPO "$TOP/install.sh")
+read -r DGPU_TAG DGPU_REV _ <<<"$(resolve "$DGPU_REPO" "$DGPU_ARG")" || true
+[ -n "${DGPU_REV:-}" ] || die "could not resolve $DGPU_REPO${DGPU_ARG:+ $DGPU_ARG}"
 WORK=$(mktemp -d /tmp/mbp-bundle.XXXXXX)
 trap 'rm -rf "$WORK"' EXIT
 B="$WORK/pop-mbp11-3-bundle"
@@ -54,12 +56,15 @@ done
 [ -z "$missing" ] || { log "installing build tools:$missing"; sudo apt-get install -y -q $missing; }
 
 log "scripts"
-cp "$TOP/install.sh" "$TOP/verify.sh" "$TOP/uninstall.sh" "$B/"
+cp -r "$TOP/install.sh" "$TOP/verify.sh" "$TOP/uninstall.sh" "$TOP/lib" "$B/"
 
 log "pop-mbp11-3-dgpu $DGPU_TAG ($DGPU_REV)"
 mkdir -p "$B/dgpu"
 curl -fsSL "https://github.com/$DGPU_REPO/archive/$DGPU_REV.tar.gz" | tar xz -C "$B/dgpu" --strip-components=1
-echo "$DGPU_REV" > "$B/dgpu/.rev"
+echo "$DGPU_REV" > "$B/dgpu/.rev"; echo "$DGPU_TAG" > "$B/dgpu/.tag"
+RELEASE_TAG=$(conf RELEASE_TAG "$B/dgpu/install.sh"); KVER=$(conf KVER "$B/dgpu/install.sh")
+KPKG=$(conf KPKG "$B/dgpu/install.sh")
+[ -n "$KPKG" ] || die "pop-mbp11-3-dgpu $DGPU_TAG has no KPKG; it is older than v0.1.3"
 RECLOCKED_REPO=$(conf RECLOCKED_REPO "$B/dgpu/install.sh"); RECLOCKED_BRANCH=$(conf RECLOCKED_BRANCH "$B/dgpu/install.sh")
 GPU_SWITCH_REPO=$(conf GPU_SWITCH_REPO "$B/dgpu/install.sh")
 
