@@ -3,6 +3,26 @@
 MacBook Pro 11,3 kit for Pop!_OS 24.04: one guided installer for the 15" Retina MacBook Pro (Late 2013 / Mid 2014,
 **MacBookPro11,3**: Intel Iris Pro 5200 + NVIDIA GeForce GT 750M) on **Pop!_OS 24.04 with COSMIC**.
 
+## Supported hardware
+- MacBook Pro 15" Late 2013 and Mid 2014 (MacBookPro11,3, Iris Pro 5200 + GeForce GT 750M) — fully supported
+- MacBook Pro 15" Late 2013 / Mid 2014 Intel-only (MacBookPro11,2) — Wi-Fi, keys and applets only (`--allow-11-2`)
+- Anything else (2015 models, 13" models, 2012 Retina) — not supported; the installer checks the model and refuses
+
+## What it sets up
+- Wi-Fi: Broadcom BCM4360 via broadcom-sta (wl) — works, no power-save support in that driver
+- Boot on the Intel GPU: rEFInd with the macOS-version spoof, gpu-switch, COSMIC rendering on Intel
+- NVIDIA GT 750M on demand: patched 7.0.11 kernel with nouveau runtime PM (DynOff at idle, wakes for DRI_PRIME apps, goes back to sleep), reclocked for clocks and fans
+- Power: Thunderbolt 2 controller runtime-suspends (≈1.7 W saved, the same as a full firmware power-off); iGPU excluded from the IOMMU; measured idle ≈14 W at 10% brightness. The remaining gap to ~10 W is the CPU package held at PC3 by NVMe drives without ASPM — see the [Power section](https://github.com/onuraksoy3/pop-mbp11-3-dgpu#power) of pop-mbp11-3-dgpu
+- Keys and dock (optional): keyd Mac-style shortcuts via Clover, window previews via Clover Dock
+- Suspend/resume, battery and backlight work; the stock Pop kernel stays one rEFInd click away as a fallback
+
+## Versions and updates
+- Each component follows its newest release by default: the dGPU feature (pop-mbp11-3-dgpu), Clover and Clover Dock. Re-running the installer (or the launcher) updates a component when a newer release exists; installed versions are recorded in /var/lib/pop-mbp11-3/versions.
+- --clover-ref, --clover-dock-ref and --dgpu-ref <tag|commit> pin a specific version; --from-main follows development branches.
+- After booting macOS, the firmware may reset the boot order and GPU preference. Hold Option at power-on to pick rEFInd, or re-run the intel-boot phase — it's idempotent.
+
+Status: beta. Everything here was built and verified on one MacBookPro11,3. A fresh-install run has not yet been done — if you're the first, please open an issue with /var/log/pop-mbp11-3-install.log attached.
+
 ## One command
 
 ```sh
