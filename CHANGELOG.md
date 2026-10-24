@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.1.1 — 2026-10-24
 - Versions: pop-mbp11-3-dgpu now follows its newest `vX.Y.Z` tag instead of a commit pinned in `install.sh`; Clover
   and Clover Dock follow their latest `vX.Y.Z` release as before. `--dgpu-ref`, `--clover-ref` and
   `--clover-dock-ref` take a tag, branch or commit; `--from-main` uses `main` for all three. A ref that doesn't
