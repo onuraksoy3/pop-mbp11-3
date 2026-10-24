@@ -1,8 +1,8 @@
 #!/bin/bash
-# pop-mbp11-3-dgpu — guided setup for the 15" MacBook Pro (Late 2013 / Mid 2014, MacBookPro11,3: Intel Iris
+# pop-mbp11-3 — guided setup for the 15" MacBook Pro (Late 2013 / Mid 2014, MacBookPro11,3: Intel Iris
 # Pro + NVIDIA GT 750M) on Pop!_OS 24.04 with COSMIC: macOS-style GPU switching, Wi-Fi, patched kernel, Clover.
 #
-#   curl -fsSL https://raw.githubusercontent.com/onuraksoy3/pop-mbp11-3-dgpu/main/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/onuraksoy3/pop-mbp11-3/main/install.sh | sudo bash
 #
 # With no flags this opens a TUI: detection summary, phase checklist, then a list of everything it will write.
 # Phases (each is checked first and skipped when already done; --all runs them in this order):
@@ -12,6 +12,7 @@
 #   kernel       7.0.11-mbp (vanilla 7.0.11 + gmux/nouveau power-cycle patches + TB runtime PM), its own
 #                systemd-boot entry with nouveau.runpm=1, rEFInd fallback to the stock kernel
 #   reclocked    pstate governor + fans for the GT 750M, service gated to the -mbp kernel
+#                (intel-boot, kernel and reclocked run pop-mbp11-3-dgpu's install.sh, pinned below)
 #   keyd         key remapping daemon (needed by Clover)
 #   clover       Clover applet (Mac-style keys and trackpad on COSMIC), built for your user
 #   clover-dock  Clover Dock (app list with hover previews), built for your user
@@ -23,21 +24,22 @@
 #         --kernel-dir D  use the kernel .deb files from directory D instead of downloading
 #         --offline D     install from an unpacked pop-mbp11-3-bundle (tools/make-bundle.sh) instead of the network
 #         --dry-run       show what would be written and stop
-#         --allow-11-2    allow a MacBookPro11,2 (no dGPU: wifi, kernel, keyd, clover, clover-dock only)
+#         --allow-11-2    allow a MacBookPro11,2 (no dGPU: wifi, keyd, clover, clover-dock only)
 #         --oc-stanza     also write a "macOS (OpenCore)" rEFInd entry, if rEFInd's scan does not show OpenCore
 #   --max-0f / --no-kernel / --kernel-dir on their own keep the v0.1 behaviour: intel-boot, kernel, reclocked.
 #
 # Log: /var/log/pop-mbp11-3-install.log. Undo: uninstall.sh. Verify after reboot: verify.sh.
 set -euo pipefail
 
-REPO="onuraksoy3/pop-mbp11-3-dgpu"
+REPO="onuraksoy3/pop-mbp11-3"
 REF=${MBP_REF:-main}
+# The dGPU phases are pop-mbp11-3-dgpu's own install.sh at this commit (tag v0.1.3); this kit keeps no copy.
+DGPU_REPO="onuraksoy3/pop-mbp11-3-dgpu"
+DGPU_TAG="v0.1.3"
+DGPU_REV="d1965849d0c5e788ce8019cdc9c19564ddeb24f9"
 RELEASE_TAG="kernel-7.0.11-mbp"
 KVER="7.0.11-mbp"
 KPKG="7.0.11-7"
-RECLOCKED_REPO="https://github.com/IgorChicherin/reclocked.git"
-RECLOCKED_BRANCH="patch/linux-6.18.54-kernel"
-GPU_SWITCH_REPO="https://github.com/0xbb/gpu-switch"
 KEYD_REPO="https://github.com/rvaiya/keyd"
 KEYD_TAG="v2.6.0"
 CLOVER_REPO="onuraksoy3/cosmic-ext-applet-clover"
@@ -57,8 +59,8 @@ die()  { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 # Piped through curl there is no script directory: fetch the repo at $REF and run the copy, on the terminal.
 HERE=""
 [ -z "${BASH_SOURCE[0]:-}" ] || HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)
-if [ ! -f "$HERE/files/dgpu-off.service" ]; then
-  [ -z "${MBP_BOOTSTRAPPED:-}" ] || die "bootstrap failed: files/ missing in $HERE"
+if [ ! -f "$HERE/uninstall.sh" ]; then
+  [ -z "${MBP_BOOTSTRAPPED:-}" ] || die "bootstrap failed: uninstall.sh missing in $HERE"
   BOOT=$(mktemp -d /tmp/pop-mbp11-3.XXXXXX)
   curl -fsSL "https://github.com/$REPO/archive/$REF.tar.gz" | tar xz -C "$BOOT" --strip-components=1 \
     || die "could not download $REPO@$REF (no network? see the README: \"No Wi-Fi on first boot?\")"
@@ -245,7 +247,7 @@ checks_clover-dock() { ck "clover-dock for ${TARGET_USER:-?}" user_has clover-do
 # Why a phase cannot run here (empty: it can).
 unavailable() {
   case "$1" in
-    intel-boot|reclocked) [ "$HAS_DGPU" = 1 ] || echo "no dGPU on the MacBookPro11,2" ;;
+    intel-boot|kernel|reclocked) [ "$HAS_DGPU" = 1 ] || echo "no dGPU on the MacBookPro11,2" ;;
     clover|clover-dock)
       if [ -n "$OFFLINE" ]; then echo "needs the network (built from source); run again once Wi-Fi works"
       elif [ -z "$TARGET_USER" ]; then echo "no desktop user: run with sudo from your own account"; fi ;;
@@ -322,7 +324,7 @@ plan_clover-dock() {
   echo "  file     ~/.config/cosmic/com.system76.CosmicPanel.Dock/v1/plugins_center: App Tray → Clover Dock (backup kept)"
 }
 plan_common() {
-  echo "  file     $SHARE/ (copy of this installer, verify.sh, uninstall.sh, files/)"
+  echo "  file     $SHARE/ (copy of this installer, verify.sh, uninstall.sh, dgpu/ = pop-mbp11-3-dgpu $DGPU_TAG)"
   echo "  file     $LAUNCHER (\"MacBook Pro 11,3 Setup\")"
   echo "  file     $LOG"
 }
@@ -351,7 +353,12 @@ order() {
   for p in $ALL_PHASES; do [ "${want/ $p /}" = "$want" ] || out="$out $p"; done
   echo "${out# }"
 }
+dgpu_phases() { local p out=""; for p in $SEL; do case "$p" in intel-boot|kernel|reclocked) out="$out,$p" ;; esac; done; echo "${out#,}"; }
 plan_all() {
+  if [ -n "$(dgpu_phases)" ]; then
+    echo "[pop-mbp11-3-dgpu $DGPU_TAG]"
+    echo "  run      install.sh --only $(dgpu_phases) (writes what intel-boot / kernel / reclocked list below)"
+  fi
   for p in $SEL; do echo "[$p]"; "plan_$p"; done
   echo "[always]"; plan_common
 }
@@ -435,24 +442,39 @@ phase_wifi() {
   modprobe wl 2>/dev/null && log "wl loaded" || warn "wl did not load now; it will after a reboot"
 }
 
-phase_intel-boot() {
-  log "intel-boot: rEFInd with macOS spoof, Intel as boot GPU, COSMIC on Intel"
-  apt_install refind efibootmgr git curl switcheroo-control mesa-utils libglib2.0-bin
-  if [ ! -f "$ESP/EFI/refind/refind_x64.efi" ]; then
-    refind-install --yes || die "refind-install failed"
-  fi
-  local conf="$ESP/EFI/refind/refind.conf"
-  if grep -q '^spoof_osx_version' "$conf"; then
-    sed -i 's/^spoof_osx_version.*/spoof_osx_version 10.9/' "$conf"
-  elif grep -q '^#spoof_osx_version' "$conf"; then
-    sed -i 's/^#spoof_osx_version.*/spoof_osx_version 10.9/' "$conf"
-  else
-    echo 'spoof_osx_version 10.9' >> "$conf"
-  fi
-  # Without --oc-stanza OpenCore is left to rEFInd's scan, and a stanza from an earlier --oc-stanza run is kept.
-  if [ -n "$OC_DEV" ] && [ "$OC_STANZA" = 1 ]; then
-    sed -i '/^# pop-mbp11-3 begin/,/^# pop-mbp11-3 end/d' "$conf"
-    cat >> "$conf" <<EOF
+# pop-mbp11-3-dgpu at $DGPU_REV: from the bundle or the installed copy when they hold that revision, else downloaded.
+fetch_dgpu() {
+  local d
+  for d in "${OFFLINE:+$OFFLINE/dgpu}" "$HERE/dgpu"; do
+    if [ -n "$d" ] && [ -f "$d/install.sh" ] && [ "$(cat "$d/.rev" 2>/dev/null)" = "$DGPU_REV" ]; then DGPU_DIR=$d; return; fi
+  done
+  [ -z "$OFFLINE" ] || die "the bundle has no pop-mbp11-3-dgpu $DGPU_TAG snapshot (dgpu/); rebuild it with tools/make-bundle.sh"
+  DGPU_DIR="$WORK/dgpu"; mkdir -p "$DGPU_DIR"
+  curl -fsSL "https://github.com/$DGPU_REPO/archive/$DGPU_REV.tar.gz" | tar xz -C "$DGPU_DIR" --strip-components=1 \
+    || die "could not download $DGPU_REPO $DGPU_TAG"
+  echo "$DGPU_REV" > "$DGPU_DIR/.rev"
+}
+
+# intel-boot, kernel and reclocked in one call to the dGPU installer; then the two settings it does not cover.
+run_dgpu() {
+  local phases args
+  phases=$(dgpu_phases)
+  args=(--only "$phases")
+  [ "$WANT_BOOST" = 0f ] && args+=(--max-0f)
+  [ -n "$KERNEL_DIR" ] && args+=(--kernel-dir "$KERNEL_DIR")
+  [ -n "$OFFLINE" ] && args+=(--offline "$OFFLINE")
+  log "pop-mbp11-3-dgpu $DGPU_TAG: install.sh ${args[*]}"
+  bash "$DGPU_DIR/install.sh" "${args[@]}" || die "pop-mbp11-3-dgpu install.sh failed"
+  case ",$phases," in *,reclocked,*)
+    # The dGPU installer only ever lowers boost-pstate; set it either way so the checklist's 0f choice sticks.
+    sed -i "/^\[profile default\]/,/^\$/ s/^boost-pstate = .*/boost-pstate = $WANT_BOOST/" /etc/reclocked.conf ;;
+  esac
+  case ",$phases," in *,intel-boot,*)
+    # Without --oc-stanza OpenCore is left to rEFInd's scan, and a stanza from an earlier --oc-stanza run is kept.
+    if [ -n "$OC_DEV" ] && [ "$OC_STANZA" = 1 ]; then
+      local conf="$ESP/EFI/refind/refind.conf"
+      sed -i '/^# pop-mbp11-3 begin/,/^# pop-mbp11-3 end/d' "$conf"
+      cat >> "$conf" <<EOF
 # pop-mbp11-3 begin: OpenCore found on $OC_DEV by install.sh
 menuentry "macOS (OpenCore)" {
     volume  $OC_PARTUUID
@@ -462,97 +484,9 @@ menuentry "macOS (OpenCore)" {
 }
 # pop-mbp11-3 end
 EOF
-    log "rEFInd entry for OpenCore on $OC_DEV"
-  fi
-  local num order
-  num=$(efibootmgr | awk '/rEFInd/ && !n {sub("Boot","",$1); sub("\\*","",$1); print $1; n=1}')
-  if [ -n "$num" ]; then
-    order=$(efibootmgr | awk -F': ' '/BootOrder/ {print $2}')
-    order="$num,$(echo "$order" | tr ',' '\n' | grep -v "^$num$" | paste -sd, -)"
-    efibootmgr -o "${order%,}" >/dev/null
-    log "rEFInd is boot entry $num, first in order"
-  else
-    warn "could not find a rEFInd boot entry; hold Option at the chime and choose rEFInd/EFI Boot"
-  fi
-  if [ ! -x /usr/local/bin/gpu-switch ]; then
-    if [ -n "$OFFLINE" ]; then install -m755 "$OFFLINE/src/gpu-switch" /usr/local/bin/gpu-switch
-    else git clone -q "$GPU_SWITCH_REPO" "$WORK/gpu-switch"; install -m755 "$WORK/gpu-switch/gpu-switch" /usr/local/bin/gpu-switch
-    fi
-  fi
-  /usr/local/bin/gpu-switch -i >/dev/null && log "gpu-power-prefs set: Intel drives the panel from the next boot"
-
-  local render
-  render=$(readlink -f /dev/dri/by-path/pci-0000:00:02.0-render 2>/dev/null | xargs -r basename)
-  [ -n "$render" ] || render=renderD128
-  if grep -q '^COSMIC_RENDER_DEVICE=' /etc/environment; then
-    sed -i "s/^COSMIC_RENDER_DEVICE=.*/COSMIC_RENDER_DEVICE=$render/" /etc/environment
-  else
-    echo "COSMIC_RENDER_DEVICE=$render" >> /etc/environment
-  fi
-  grep -q '^WGPU_POWER_PREF=' /etc/environment || echo 'WGPU_POWER_PREF=low' >> /etc/environment
-  install -m644 "$HERE/files/dgpu-off.service" /etc/systemd/system/dgpu-off.service
-  systemctl daemon-reload
-  systemctl enable dgpu-off.service >/dev/null 2>&1
-  systemctl enable switcheroo-control >/dev/null 2>&1 || true
-}
-
-phase_kernel() {
-  log "kernel: $KVER ($KPKG)"
-  if [ "$(dpkg-query -W -f='${Version}' "linux-image-$KVER" 2>/dev/null)" != "$KPKG" ]; then
-    if [ -z "$KERNEL_DIR" ]; then
-      local f
-      for f in "linux-image-${KVER}_${KPKG}_amd64.deb" "linux-headers-${KVER}_${KPKG}_amd64.deb"; do
-        log "downloading $f"
-        curl -fL --progress-bar "https://github.com/$REPO/releases/download/$RELEASE_TAG/$f" -o "$WORK/$f" \
-          || die "download failed: $f"
-      done
-      KIMG="$WORK/linux-image-${KVER}_${KPKG}_amd64.deb"; KHDR="$WORK/linux-headers-${KVER}_${KPKG}_amd64.deb"
-    fi
-    apt_install "$KIMG" "$KHDR" || die "kernel install failed"
-  fi
-  [ -f "/boot/vmlinuz-$KVER" ] || die "/boot/vmlinuz-$KVER missing after install"
-  if pkg_installed broadcom-sta-dkms; then
-    if dkms status 2>/dev/null | grep -q "broadcom-sta.*$KVER.*installed"; then
-      log "Wi-Fi (broadcom-sta) built for $KVER"
-    else
-      warn "broadcom-sta did not build for $KVER — Wi-Fi may be missing on that kernel; run: dkms autoinstall -k $KVER"
-    fi
-  fi
-  cp "/boot/vmlinuz-$KVER" "$POP_DIR/vmlinuz-mbp.efi"
-  cp "/boot/initrd.img-$KVER" "$POP_DIR/initrd-mbp.img"
-  cat > "$ESP/loader/entries/Pop_OS-mbp.conf" <<EOF
-title Pop!_OS $KVER (nouveau runpm)
-linux $POP_REL/vmlinuz-mbp.efi
-initrd $POP_REL/initrd-mbp.img
-options root=UUID=$ROOT_UUID ro quiet splash nouveau.runpm=1 intel_iommu=igfx_off i915.enable_fbc=1
-EOF
-  local stock lc="$ESP/loader/loader.conf"
-  stock=$(awk '/^options/ {sub("^options ",""); print; exit}' "$ESP/loader/entries/Pop_OS-current.conf" 2>/dev/null || true)
-  [ -n "$stock" ] || stock="root=UUID=$ROOT_UUID ro quiet splash"
-  printf '"Pop!_OS stock kernel" "%s"\n' "$stock" > "$POP_DIR/refind_linux.conf"
-  if grep -q '^default' "$lc"; then sed -i 's/^default .*/default Pop_OS-mbp.conf/' "$lc"; else echo 'default Pop_OS-mbp.conf' >> "$lc"; fi
-  if grep -q '^timeout' "$lc"; then sed -i 's/^timeout.*/timeout 5/' "$lc"; else echo 'timeout 5' >> "$lc"; fi
-  log "boot entry Pop_OS-mbp.conf written and set as default; rEFInd fallback to the stock kernel in place"
-}
-
-phase_reclocked() {
-  log "reclocked"
-  apt_install build-essential git
-  if [ -n "$OFFLINE" ]; then
-    mkdir -p "$WORK/reclocked"; tar xzf "$OFFLINE/src/reclocked.tar.gz" -C "$WORK/reclocked" --strip-components=1
-  else
-    git clone -q --depth 1 -b "$RECLOCKED_BRANCH" "$RECLOCKED_REPO" "$WORK/reclocked"
-  fi
-  make -s -C "$WORK/reclocked/src" >/dev/null || die "reclocked build failed"
-  install -m755 "$WORK/reclocked/src/reclocked" "$WORK/reclocked/src/reclockctl" /usr/local/bin/
-  [ -f /etc/reclocked.conf ] || install -m644 "$HERE/files/reclocked.conf" /etc/reclocked.conf
-  sed -i "/^\[profile default\]/,/^\$/ s/^boost-pstate = .*/boost-pstate = $WANT_BOOST/" /etc/reclocked.conf
-  if [ "$WANT_BOOST" = 0f ]; then
-    warn "0f boost enabled (Apple's factory memory clock under sustained load). If the GPU ever freezes, set boost-pstate = -1 in /etc/reclocked.conf"
-  fi
-  install -m644 "$HERE/files/reclocked.service" /etc/systemd/system/reclocked.service
-  systemctl daemon-reload
-  systemctl enable reclocked.service >/dev/null 2>&1
+      log "rEFInd entry for OpenCore on $OC_DEV"
+    fi ;;
+  esac
 }
 
 phase_keyd() {
@@ -622,13 +556,14 @@ phase_clover-dock() {
 install_launcher() {
   if [ "$HERE" != "$SHARE" ]; then
     rm -rf "$SHARE"; mkdir -p "$SHARE"
-    cp -r "$HERE/install.sh" "$HERE/verify.sh" "$HERE/uninstall.sh" "$HERE/files" "$SHARE/"
+    cp -r "$HERE/install.sh" "$HERE/verify.sh" "$HERE/uninstall.sh" "$SHARE/"
   fi
+  if [ -n "$DGPU_DIR" ] && [ "$DGPU_DIR" != "$SHARE/dgpu" ]; then rm -rf "$SHARE/dgpu"; cp -r "$DGPU_DIR" "$SHARE/dgpu"; fi
   cat > "$LAUNCHER" <<EOF
 [Desktop Entry]
 Type=Application
 Name=MacBook Pro 11,3 Setup
-Comment=GPU switching, Wi-Fi, patched kernel and Clover for this MacBook
+Comment=GPU switching, Wi-Fi, patched kernel and Clover for this MacBook (pop-mbp11-3)
 Exec=cosmic-term -- sudo env MBP_LAUNCHER=1 $SHARE/install.sh
 Icon=computer-laptop
 Categories=System;Settings;
@@ -636,24 +571,19 @@ Terminal=false
 EOF
 }
 
-for p in $SEL; do "phase_$p"; done
+DGPU_DIR=""; [ "$HAS_DGPU" = 0 ] || fetch_dgpu
+for p in $SEL; do
+  case "$p" in
+    intel-boot|kernel|reclocked) [ -n "${DGPU_DONE:-}" ] || { run_dgpu; DGPU_DONE=1; } ;;
+    *) "phase_$p" ;;
+  esac
+done
 install_launcher
 
 cat <<EOF
 
 $(printf '\033[1;32mDone:\033[0m') ${SEL:-nothing to do}. Log: $LOG
 EOF
-case " $SEL " in *" intel-boot "*|*" kernel "*|*" wifi "*) cat <<EOF
-Reboot now. At rEFInd choose Pop!_OS; systemd-boot boots $KVER by default.
-After logging in, run verify.sh (or: sudo cat /sys/kernel/debug/vgaswitcheroo/switch — the DIS line
-should read DynOff after ~10 s idle, DynPwr while a DRI_PRIME app runs).
-
-If the patched kernel misbehaves: at rEFInd pick the "vmlinuz.efi" entry (stock kernel), then
-  sudo sed -i 's/^default .*/default Pop_OS-current/' $ESP/loader/loader.conf
-
-Run apps on the GT 750M: right-click → "Run with…" in COSMIC, or DRI_PRIME=pci-0000_01_00_0 <app>.
-After any macOS session: sudo gpu-switch -i, then reboot (macOS resets the boot GPU).
-EOF
-esac
+case " $SEL " in *" intel-boot "*|*" kernel "*|*" wifi "*) echo "Reboot to finish, then run verify.sh." ;; esac
 [ -n "${MBP_LAUNCHER:-}" ] && read -rp "Press Enter to close." _ </dev/tty
 exit 0

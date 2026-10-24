@@ -1,12 +1,12 @@
-# pop-mbp11-3-dgpu
+# pop-mbp11-3
 
-macOS-style GPU switching for the 15" Retina MacBook Pro (Late 2013 / Mid 2014, **MacBookPro11,3**:
-Intel Iris Pro 5200 + NVIDIA GeForce GT 750M) on **Pop!_OS 24.04 with COSMIC**.
+MacBook Pro 11,3 kit for Pop!_OS 24.04: one guided installer for the 15" Retina MacBook Pro (Late 2013 / Mid 2014,
+**MacBookPro11,3**: Intel Iris Pro 5200 + NVIDIA GeForce GT 750M) on **Pop!_OS 24.04 with COSMIC**.
 
 ## One command
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/onuraksoy3/pop-mbp11-3-dgpu/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/onuraksoy3/pop-mbp11-3/main/install.sh | sudo bash
 ```
 
 A text menu shows what it detected, lets you pick what to install, and lists every file, package, EFI variable
@@ -16,28 +16,33 @@ by default. Then run `verify.sh` (`--bench` adds the glmark2 comparison). To re-
 
 ## What you get
 
-- The Intel GPU drives the panel and the desktop.
-- The GT 750M is **powered off** until an app launched on it needs it (~1 s to wake), runs at full
-  clocks under load, and powers off again a few seconds after the app exits.
-- Fans follow a sane curve. Wi-Fi, suspend, everything else keeps working.
+- Wi-Fi (Broadcom `wl` for the BCM4360).
+- macOS-style GPU switching from [pop-mbp11-3-dgpu](https://github.com/onuraksoy3/pop-mbp11-3-dgpu): the Intel GPU
+  drives the panel and the desktop. The GT 750M stays **powered off** until an app launched on it needs it (~1 s to
+  wake), runs at full clocks under load, and powers off again a few seconds after the app exits. Fans follow a
+  sane curve.
+- Optionally, Mac-style keys, trackpad and dock on COSMIC: keyd, Clover and Clover Dock.
 
-Measured on the machine this was built on: Intel 540 vs GT 750M 1063 (`0e`) / 1309 (`0f`) in
-`glmark2 --off-screen -s 1920x1200`; roughly 4–9 W saved at idle versus leaving the card powered.
+The dGPU phases are not copied here. The kit runs pop-mbp11-3-dgpu's own `install.sh` at a pinned commit
+(`DGPU_TAG` / `DGPU_REV` in `install.sh`, currently v0.1.3). It passes `--only` with the phases you picked, plus
+`--max-0f`, `--kernel-dir` and `--offline` when they apply. Detection, the menu, Wi-Fi, keyd, Clover and the offline
+bundle live in this repo.
 
 ## Phases and flags
 
 | Phase | What it does | Ticked by default |
 |---|---|---|
 | `wifi` | `broadcom-sta-dkms` (wl driver for the BCM4360) | yes |
-| `intel-boot` | rEFInd + macOS spoof, `gpu-switch -i`, COSMIC on Intel, `dgpu-off.service` | yes |
-| `kernel` | `7.0.11-mbp` and its systemd-boot entry | yes |
-| `reclocked` | GT 750M clocks and fans | yes |
+| `intel-boot` | rEFInd + macOS spoof, `gpu-switch -i`, COSMIC on Intel, `dgpu-off.service` (pop-mbp11-3-dgpu) | yes |
+| `kernel` | `7.0.11-mbp` and its systemd-boot entry (pop-mbp11-3-dgpu) | yes |
+| `reclocked` | GT 750M clocks and fans (pop-mbp11-3-dgpu) | yes |
 | `keyd` | key remapping daemon, needed by Clover | no |
 | `clover` | [Clover](https://github.com/onuraksoy3/cosmic-ext-applet-clover): Mac-style keys and trackpad | no |
 | `clover-dock` | [Clover Dock](https://github.com/onuraksoy3/cosmic-ext-applet-clover-dock): app list with hover previews | no |
 
-Phases that are already done are shown as installed and skipped. Clover and Clover Dock are built from source for
-the user who ran `sudo` (rustup is installed for them if missing; the first build takes 10–15 min each).
+Phases that are already done are shown as installed and skipped. `--dry-run` lists every sub-check behind that.
+Clover and Clover Dock are built from source for the user who ran `sudo` (rustup is installed for them if missing;
+the first build takes 10–15 min each).
 
 Flags for scripted use (no menu):
 - `--all` runs every phase; `--phases wifi,kernel` runs only those.
@@ -46,11 +51,11 @@ Flags for scripted use (no menu):
 - `--kernel-dir DIR` uses your own `.deb` files.
 - `--offline DIR` installs from the bundle (below).
 - `--dry-run` shows what would be written and stops.
-- `--allow-11-2` accepts a MacBookPro11,2. It has no NVIDIA GPU, so only wifi, kernel, keyd, clover and clover-dock apply.
+- `--allow-11-2` accepts a MacBookPro11,2. It has no NVIDIA GPU, so only wifi, keyd, clover and clover-dock apply.
 - `--oc-stanza` writes a "macOS (OpenCore)" entry into `refind.conf`. Only needed if rEFInd's own scan doesn't show OpenCore.
 
-`--max-0f`, `--no-kernel` and `--kernel-dir` on their own still do what they did in v0.1: intel-boot, kernel and
-reclocked.
+`--max-0f`, `--no-kernel` and `--kernel-dir` on their own run intel-boot, kernel and reclocked, like
+pop-mbp11-3-dgpu's installer.
 
 The installer refuses to run on anything but a MacBookPro11,3. It also checks for the Intel GPU at PCI 00:02.0 and
 the NVIDIA GPU at 01:00.0.
@@ -60,7 +65,7 @@ the NVIDIA GPU at 01:00.0.
 Pop!_OS has no driver for the BCM4360, so a fresh install has no network. Use another machine:
 
 1. Download `pop-mbp11-3-bundle.tar.gz` from the
-   [latest release](https://github.com/onuraksoy3/pop-mbp11-3-dgpu/releases/latest/download/pop-mbp11-3-bundle.tar.gz)
+   [latest release](https://github.com/onuraksoy3/pop-mbp11-3/releases/latest/download/pop-mbp11-3-bundle.tar.gz)
    and copy it to a USB stick.
 2. On the MacBook:
    ```sh
@@ -68,9 +73,9 @@ Pop!_OS has no driver for the BCM4360, so a fresh install has no network. Use an
    sudo ./install.sh --offline .
    ```
 
-The bundle includes the kernel, the Wi-Fi driver, rEFInd, build tools, keyd and the reclocked and gpu-switch
-sources (~260 MB). Clover and Clover Dock need the network. Once Wi-Fi works, run the setup again from the app
-grid to add them.
+The bundle includes a snapshot of pop-mbp11-3-dgpu, the kernel, the Wi-Fi driver, rEFInd, build tools, keyd and the
+reclocked and gpu-switch sources (~260 MB). Clover and Clover Dock need the network. Once Wi-Fi works, run the setup
+again from the app grid to add them.
 
 ## Fresh install
 
@@ -91,27 +96,16 @@ rEFInd's own scan picks up OpenCore, so nothing is written for it. If OpenCore d
 On any Pop!_OS 24.04 machine with internet:
 
 ```sh
-tools/make-bundle.sh                     # → ./pop-mbp11-3-bundle.tar.gz
-gh release upload v0.2.0 pop-mbp11-3-bundle.tar.gz -R onuraksoy3/pop-mbp11-3-dgpu
+tools/make-bundle.sh --out ~/src            # → ~/src/pop-mbp11-3-bundle.tar.gz
+gh release upload <tag> ~/src/pop-mbp11-3-bundle.tar.gz -R onuraksoy3/pop-mbp11-3
 ```
 
-Attach it to the newest release (currently `v0.2.0`, which must be marked latest) so the `releases/latest/download`
-link above keeps working. Rebuild and re-attach it whenever the kernel packages or `files/` change.
+Attach it to the newest release, which must be marked latest, so the `releases/latest/download` link above keeps
+working. Rebuild and re-attach it whenever `install.sh` or the dGPU pin changes.
 
-## What it installs
-
-| Piece | Why |
-|---|---|
-| rEFInd + `spoof_osx_version 10.9` | Apple's EFI powers the Intel GPU only when it thinks macOS is booting |
-| `gpu-switch -i` (0xbb) | Sets the `gpu-power-prefs` EFI variable so Intel is the boot GPU |
-| `COSMIC_RENDER_DEVICE`, `WGPU_POWER_PREF` | COSMIC otherwise renders its shell on the NVIDIA card |
-| `dgpu-off.service` | On the **stock** kernel: cut the dGPU at boot (it cannot be woken there) |
-| `linux-image-7.0.11-mbp` | Vanilla 7.0.11 + 16 patches from [reclocked](https://github.com/KrzysztofKowalski/reclocked) that fix the gmux power-cycle hang, plus `kernel/patches/0018` (Thunderbolt runtime PM); built with Pop's own config; `kernel/build.sh` reproduces it |
-| `Pop_OS-mbp.conf` boot entry | `nouveau.runpm=1 intel_iommu=igfx_off i915.enable_fbc=1` only on this kernel; the stock kernel stays a rEFInd click away |
-| `reclocked` daemon + config | Raises the 750M's clocks under load (nouveau has no governor), controls the fans via applesmc |
-| `broadcom-sta-dkms` | Wi-Fi: the BCM4360 needs Broadcom's `wl` driver |
-| rEFInd "macOS (OpenCore)" entry | Only with `--oc-stanza`; rEFInd's scan finds OpenCore on its own |
-| keyd, Clover, Clover Dock | Optional: Mac-style keyboard, trackpad and dock on COSMIC |
+To move to a newer pop-mbp11-3-dgpu: tag it there, set `DGPU_TAG` and `DGPU_REV` in `install.sh`, and rebuild the
+bundle. `make-bundle.sh` reads the pin, the kernel version, and the reclocked and gpu-switch sources from those
+two places.
 
 ## Day to day
 
@@ -123,39 +117,23 @@ link above keeps working. Rebuild and re-attach it whenever the kernel packages 
 - The HDMI and Thunderbolt display outputs are wired to the NVIDIA GPU; plug a monitor in while a `DRI_PRIME`
   app is running, or run `sudo reclockctl dgpu-on` first.
 
-## Power
-
-`kernel/patches/0018-thunderbolt-runtime-pm-tb2-host.patch` sets `tb->root_switch->rpm = true` in `tb_start()`, so the
-Falcon Ridge TB2 host router and its NHI runtime-suspend (upstream only enables this for USB4 routers). The NHI
-reaches D3hot ~15 s after boot and idle draw fell ~1.7 W: 15.5 → 13.8 W at 10 % brightness, measured with `upower`.
-Booting with `acpi_osi=!Darwin` (the firmware then powers the controller off completely) saved nothing further, so
-the patch captures the whole gain while keeping the ports.
-
-- The remaining ~4 W is the CPU package stuck at PC3: the NVMe (Lexar NM610 PRO) advertises no ASPM. A drive with
-  ASPM L1 (e.g. SK Hynix Gold P31) is the fix.
-- `i915.enable_fbc=1` is set, but FBC stays inactive in practice because cosmic-comp scans out 10-bit (XB30).
-- If Thunderbolt hotplug fails to wake the ports, keep the controller powered:
-  `echo on | sudo tee /sys/bus/pci/devices/0000:08:00.0/power/control`
+Power measurements, the Thunderbolt runtime-PM patch, and how the kernel is built are in
+[pop-mbp11-3-dgpu](https://github.com/onuraksoy3/pop-mbp11-3-dgpu#power).
 
 ## Uninstall
 
-`sudo ./uninstall.sh` (also installed as `/usr/local/share/pop-mbp11-3/uninstall.sh`). Add `--purge-kernel` to
-remove the kernel packages, `--keep-boot-gpu` to keep booting on Intel, `--remove-apps` to remove keyd, Clover and
-Clover Dock, and `--remove-wifi` to remove the Wi-Fi driver.
-
-## TODO
-
-- Rename the repository to `pop-mbp11-3` (it does more than the dGPU now). GitHub redirects the old URLs, but
-  update `REPO` in `install.sh` and `tools/make-bundle.sh`, the README links, and the bootstrap tarball path.
+`sudo ./uninstall.sh` (also installed as `/usr/local/share/pop-mbp11-3/uninstall.sh`). It runs pop-mbp11-3-dgpu's
+`uninstall.sh` for the dGPU part, then removes the kit's launcher. Add `--purge-kernel` to remove the kernel packages,
+`--keep-boot-gpu` to keep booting on Intel, `--remove-apps` to remove keyd, Clover and Clover Dock, and
+`--remove-wifi` to remove the Wi-Fi driver.
 
 ## Credits
 
 - Kernel patches and the `reclocked` daemon: Krzysztof Kowalski (MIT; patches signed-off for the kernel).
 - MacBookPro11,3 Arch runbook and the 6.18 series, which proved this works end to end: IgorChicherin.
 - `gpu-switch` and the AppleMuxControl reverse-engineering: 0xbb.
-- Companion applet for Mac-style keys and trackpad on COSMIC: [Clover](https://github.com/onuraksoy3/cosmic-ext-applet-clover).
+- `keyd`: rvaiya.
 
 ## Licence
 
-Scripts and config in this repo: MIT. The kernel packages are GPL-2.0 like Linux; source is kernel.org 7.0.11 plus
-the patches linked above, reproducible with `kernel/build.sh`.
+MIT.

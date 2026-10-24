@@ -1,31 +1,34 @@
 #!/bin/bash
-# uninstall.sh — reverts to the stock kernel as default and removes what install.sh added.
+# uninstall.sh — removes what the pop-mbp11-3 kit added. The dGPU part (kernel default, boot entries, reclocked,
+# dgpu-off, /etc/environment, boot GPU) is undone by pop-mbp11-3-dgpu's own uninstall.sh.
 #   --purge-kernel   also apt-remove the 7.0.11-mbp packages
 #   --keep-boot-gpu  leave rEFInd spoof and gpu-power-prefs (Intel boot) in place (recommended)
 #   --remove-apps    also remove keyd, Clover and Clover Dock (for the user running sudo)
 #   --remove-wifi    also apt-remove broadcom-sta-dkms (no Wi-Fi afterwards on this MacBook)
 set -euo pipefail
 [ "$(id -u)" = 0 ] || { echo "run as root (sudo)"; exit 1; }
-PURGE=0; KEEP_BOOT=0; APPS=0; WIFI=0
+DGPU_ARGS=(); APPS=0; WIFI=0
 for a in "$@"; do
   case "$a" in
-    --purge-kernel) PURGE=1 ;; --keep-boot-gpu) KEEP_BOOT=1 ;; --remove-apps) APPS=1 ;; --remove-wifi) WIFI=1 ;;
-    -h|--help) sed -n '2,6p' "$0"; exit 0 ;;
+    --purge-kernel|--keep-boot-gpu) DGPU_ARGS+=("$a") ;; --remove-apps) APPS=1 ;; --remove-wifi) WIFI=1 ;;
+    -h|--help) sed -n '2,7p' "$0"; exit 0 ;;
   esac
 done
-ESP=$(findmnt -no TARGET /boot/efi 2>/dev/null || echo /boot/efi); KVER=7.0.11-mbp
-LC="$ESP/loader/loader.conf"
-[ -f "$LC" ] && sed -i 's/^default .*/default Pop_OS-current/' "$LC"
-rm -f "$ESP"/loader/entries/Pop_OS-mbp.conf "$ESP"/EFI/Pop_OS-*/vmlinuz-mbp.efi "$ESP"/EFI/Pop_OS-*/initrd-mbp.img "$ESP"/EFI/Pop_OS-*/refind_linux.conf
+SHARE=/usr/local/share/pop-mbp11-3
+HERE=$(cd "$(dirname "$0")" && pwd)
+ESP=$(findmnt -no TARGET /boot/efi 2>/dev/null || echo /boot/efi)
+
+# The dGPU snapshot the kit installed with (or the one in this bundle).
+DGPU=""
+for d in "$SHARE/dgpu" "$HERE/dgpu"; do [ -f "$d/uninstall.sh" ] && { DGPU=$d; break; }; done
+if [ -n "$DGPU" ]; then
+  bash "$DGPU/uninstall.sh" "${DGPU_ARGS[@]}"
+else
+  echo "pop-mbp11-3-dgpu not found in $SHARE/dgpu: the dGPU setup is left in place"
+fi
+
 [ -f "$ESP/EFI/refind/refind.conf" ] && sed -i '/^# pop-mbp11-3 begin/,/^# pop-mbp11-3 end/d' "$ESP/EFI/refind/refind.conf"
-systemctl disable --now reclocked.service 2>/dev/null || true
-rm -f /etc/systemd/system/reclocked.service /usr/local/bin/reclocked /usr/local/bin/reclockctl /etc/reclocked.conf
-systemctl disable dgpu-off.service 2>/dev/null || true
-rm -f /etc/systemd/system/dgpu-off.service; rm -rf /etc/systemd/system/dgpu-off.service.d
-sed -i '/^COSMIC_RENDER_DEVICE=/d; /^WGPU_POWER_PREF=/d' /etc/environment
-rm -f /usr/share/applications/pop-mbp11-3-setup.desktop; rm -rf /usr/local/share/pop-mbp11-3
-systemctl daemon-reload
-if [ "$PURGE" = 1 ]; then apt-get remove -y -q "linux-image-$KVER" "linux-headers-$KVER" >/dev/null || true; fi
+rm -f /usr/share/applications/pop-mbp11-3-setup.desktop
 if [ "$WIFI" = 1 ]; then apt-get remove -y -q broadcom-sta-dkms >/dev/null || true; echo "broadcom-sta-dkms removed"; fi
 
 if [ "$APPS" = 1 ]; then
@@ -58,9 +61,5 @@ if [ "$APPS" = 1 ]; then
   systemctl daemon-reload
   echo "keyd removed (/etc/keyd kept)"
 fi
-
-if [ "$KEEP_BOOT" = 0 ]; then
-  [ -x /usr/local/bin/gpu-switch ] && /usr/local/bin/gpu-switch -d >/dev/null && echo "boot GPU back to NVIDIA (gpu-power-prefs)"
-  echo "rEFInd left installed; to stop using it: sudo efibootmgr -o <Pop entry number>,…  (see: efibootmgr)"
-fi
-echo "Reverted. Reboot. The stock kernel is the default again; the dGPU will stay powered (no dgpu-off service)."
+rm -rf "$SHARE"
+echo "Kit removed (launcher, $SHARE)."

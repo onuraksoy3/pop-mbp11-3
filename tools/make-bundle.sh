@@ -2,20 +2,15 @@
 # tools/make-bundle.sh — build pop-mbp11-3-bundle.tar.gz for installing without a network (no Wi-Fi driver yet).
 # Run as your normal user on any Pop!_OS 24.04 machine with internet (sudo is used only to install build tools):
 #   tools/make-bundle.sh [--kernel-dir D] [--out DIR]
-# Contents: install.sh, verify.sh, uninstall.sh, files/, debs/kernel/ (7.0.11-7), debs/apt/ (broadcom-sta-dkms,
-# refind, build tools and the rest of their dependency closure, indexed as a local apt repository),
-# debs/keyd/ (keyd built into a .deb), src/ (reclocked and gpu-switch sources).
+# Contents: install.sh, verify.sh, uninstall.sh, dgpu/ (pop-mbp11-3-dgpu at the revision install.sh pins),
+# debs/kernel/ (7.0.11-7), debs/apt/ (broadcom-sta-dkms, refind, build tools and the rest of their dependency
+# closure, indexed as a local apt repository), debs/keyd/ (keyd built into a .deb), src/ (reclocked and gpu-switch
+# sources, at the URLs the dGPU installer uses).
 # Clover and Clover Dock are not included: they are built from source and need the network.
 # On the target:  tar xzf pop-mbp11-3-bundle.tar.gz && cd pop-mbp11-3-bundle && sudo ./install.sh --offline .
 set -euo pipefail
 
-REPO="onuraksoy3/pop-mbp11-3-dgpu"
-RELEASE_TAG="kernel-7.0.11-mbp"
-KVER="7.0.11-mbp"
-KPKG="7.0.11-7"
-RECLOCKED_REPO="https://github.com/IgorChicherin/reclocked.git"
-RECLOCKED_BRANCH="patch/linux-6.18.54-kernel"
-GPU_SWITCH_REPO="https://github.com/0xbb/gpu-switch"
+REPO="onuraksoy3/pop-mbp11-3"
 KEYD_REPO="https://github.com/rvaiya/keyd"
 KEYD_TAG="v2.6.0"
 # Everything install.sh may apt-get in offline mode, plus what the kernel packages depend on.
@@ -40,6 +35,13 @@ done
 [ "${ID:-}" = pop ] && [ "${VERSION_ID:-}" = 24.04 ] || die "build the bundle on Pop!_OS 24.04 so the packages match"
 
 TOP=$(cd "$(dirname "$0")/.." && pwd)
+# One source of truth: the dGPU pin and kernel version come from install.sh, the reclocked and gpu-switch
+# sources from the pinned dGPU installer.
+conf() { sed -n "s/^$1=\"\(.*\)\"$/\1/p" "$2" | head -1; }
+DGPU_REPO=$(conf DGPU_REPO "$TOP/install.sh"); DGPU_TAG=$(conf DGPU_TAG "$TOP/install.sh")
+DGPU_REV=$(conf DGPU_REV "$TOP/install.sh"); RELEASE_TAG=$(conf RELEASE_TAG "$TOP/install.sh")
+KVER=$(conf KVER "$TOP/install.sh"); KPKG=$(conf KPKG "$TOP/install.sh")
+[ -n "$DGPU_REV" ] && [ -n "$KPKG" ] || die "could not read the dGPU pin from $TOP/install.sh"
 WORK=$(mktemp -d /tmp/mbp-bundle.XXXXXX)
 trap 'rm -rf "$WORK"' EXIT
 B="$WORK/pop-mbp11-3-bundle"
@@ -51,13 +53,20 @@ for p in build-essential git apt-utils dpkg-dev curl; do
 done
 [ -z "$missing" ] || { log "installing build tools:$missing"; sudo apt-get install -y -q $missing; }
 
-log "scripts and files/"
-cp -r "$TOP/install.sh" "$TOP/verify.sh" "$TOP/uninstall.sh" "$TOP/files" "$B/"
+log "scripts"
+cp "$TOP/install.sh" "$TOP/verify.sh" "$TOP/uninstall.sh" "$B/"
+
+log "pop-mbp11-3-dgpu $DGPU_TAG ($DGPU_REV)"
+mkdir -p "$B/dgpu"
+curl -fsSL "https://github.com/$DGPU_REPO/archive/$DGPU_REV.tar.gz" | tar xz -C "$B/dgpu" --strip-components=1
+echo "$DGPU_REV" > "$B/dgpu/.rev"
+RECLOCKED_REPO=$(conf RECLOCKED_REPO "$B/dgpu/install.sh"); RECLOCKED_BRANCH=$(conf RECLOCKED_BRANCH "$B/dgpu/install.sh")
+GPU_SWITCH_REPO=$(conf GPU_SWITCH_REPO "$B/dgpu/install.sh")
 
 log "kernel $KVER $KPKG"
 for f in "linux-image-${KVER}_${KPKG}_amd64.deb" "linux-headers-${KVER}_${KPKG}_amd64.deb"; do
   if [ -n "$KERNEL_DIR" ]; then cp "$KERNEL_DIR/$f" "$B/debs/kernel/" || die "$f not in $KERNEL_DIR"
-  else curl -fL --progress-bar "https://github.com/$REPO/releases/download/$RELEASE_TAG/$f" -o "$B/debs/kernel/$f"
+  else curl -fL --progress-bar "https://github.com/$DGPU_REPO/releases/download/$RELEASE_TAG/$f" -o "$B/debs/kernel/$f"
   fi
 done
 
@@ -88,12 +97,12 @@ cat > "$P/DEBIAN/control" <<EOF
 Package: keyd
 Version: ${KEYD_TAG#v}-0popmbp1
 Architecture: amd64
-Maintainer: pop-mbp11-3-dgpu <https://github.com/$REPO>
+Maintainer: pop-mbp11-3 <https://github.com/$REPO>
 Depends: libc6
 Section: utils
 Priority: optional
 Homepage: $KEYD_REPO
-Description: key remapping daemon (built by pop-mbp11-3-dgpu tools/make-bundle.sh)
+Description: key remapping daemon (built by pop-mbp11-3 tools/make-bundle.sh)
 EOF
 cat > "$P/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
